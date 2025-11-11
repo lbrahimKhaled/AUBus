@@ -1,26 +1,34 @@
 import socket
 
-class Driver:
-    def __init__(self, ip: str, port: int, location: str):
+class Person:
+    def __init__(self, name: str, ip: str, port: int, location: str):
+        self.name = name
         self.ip = ip
         self.port = port
         self.location = location
+        
+    def set_connection(self, conn: socket.socket):
+        self.conn = conn
+        self.online = True
 
-    def __repr__(self):
-        return f"Driver(ip='{self.ip}', port={self.port}, location='{self.location}')"
+
+class Passenger(Person):
+    def __init__(self, name: str, ip: str, port: int, location: str):
+        super().__init__(name, ip, port, location)
+        self.connection: socket.socket | None = None
+        self.online: bool = False
+
+    def set_connection(self, conn: socket.socket):
+        self.conn = conn
+        self.online = True
 
 
-class Passenger:
-    def __init__(self, conn: socket.socket, ip: str, port: int, location: str):
-        self.conn = conn            # socket.socket object (client connection)
-        self.ip = ip
-        self.port = port
-        self.location = location
-        # Create a Driver object inside Passenger
-        self.driver = Driver(ip, port, "ballout qegwva2qbv wrda")
+class Driver(Person):
+    def __init__(self, name: str, ip: str, port: int, location: str):
+        super().__init__(name, ip, port, location)
+        self.connection: socket.socket | None = None
+        self.online: bool = False
 
-    def __repr__(self):
-        return (
-            f"Passenger(ip='{self.ip}', port={self.port}, location='{self.location}', "
-            f"driver={self.driver})"
-        )
+    def set_connection(self, conn: socket.socket):
+        self.conn= conn
+        self.online = True

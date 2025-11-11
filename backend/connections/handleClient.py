@@ -1,42 +1,57 @@
 import socket
+import threading
+import json
+
+from backend.connections.util import requestDrive
+#DB dependencies
+from backend.DB.Mock import getAllDrivers ### TO DO
 from backend.DB.Mock import handleDB
-from backend.DB.models.models import Driver
-from backend.DB.models.models import Passenger, Driver
+from backend.DB.models.models import Passenger, Driver, Person
+from backend.connections.util import bindServerSocket
 
 def handleClient(person : Passenger):
     #logging in / registering
-    handleClientCredentials(person.conn, (person.ip, person.port))
+    handleClientCredentials(person)
 
-    #handling requests
-    handleClientRequests(person.conn, (person.ip, person.port))
-
-
-def handleClientRequests(person: Passenger)->None:
-    message = person.conn.recv(1024).decode('utf-8')
-    if(message == "request=1"):
-        driver : Driver = propagateRequest(person.location) # this will return the first driver that accepted our request
-        msg : str = str(driver.ip) + "*" + str(driver.port)  #then the client will split this and get the IP and port number fromt msg
+    #while true for multiple requests i.e. we will be always listening for upcoming requests
+    while True:
+        driverList : list[Driver] = handleClientRequests(person)
+    #now we will dump the list of drivers to the GUI and it will deal with it we'll send the client the json file of drivers
         
-        person.conn.send(msg.encode('utf-8'))
+        driversData = [driver.__dict__ for driver in driverList]
+        driverJSON = json.dumps(driversData)
+        person.conn.sendall(driverJSON.encode('utf-8'))
 
-def propagateRequest(location: str)->Driver:
-    availableDrivers : list[Driver] = getAllDrivers(location)
-    
-    #we can play here with asyncio and concurrency but meh
-    caller = bindServerSocket()
-    
+def handleClientRequests(person: Passenger)->list[Driver]:
+    message = person.conn.recv(1024).decode('utf-8')
+    driver : list[Driver] = []
+    if(message == "request=1"):
+        driver = propagateRequest(person) # this will return the first driver that accepted our request
+    return driver
+
+
+def propagateRequest(person: Passenger)->list[Driver]:
+    availableDrivers : list[Driver] = getAllDrivers(person.location)
+
+    actualDrivers : list[Driver] = []
+
+    #we can play here with asyncio and concurrency but meh     
     for driver in availableDrivers:
         #establish a connection with the driver and ask for his permission:
+        thread = threading.Thread(target = requestDrive, args = (person, driver, actualDrivers))
+        thread.start()
+    
+    return actualDrivers
 
-        ######### we will create a connection with each driver and ask them they will reply by 1 or 0
 
 
 
-
-def handleClientCredentials(connection, clientAddress)->None:
+def handleClientCredentials(person: Person)->None:
     #considering that the GUI will give me 2 credentials consecutively 
-    username: str = connection.recv(1024).decode('utf-8')
-    pswrd:str = connection.recv(1024).decode('utf-8')
+    username: str = person.conn.recv(1024).decode('utf-8')
+    pswrd:str = person.conn.recv(1024).decode('utf-8')
+
     #where checkDB will
     handleDB(username, pswrd)
+    ##More to do's based on DB's implementation
 
