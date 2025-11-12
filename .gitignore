@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+env/
+venv/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Logs & coverage
+logs/
+*.log
+.coverage
+htmlcov/
+
+# Local data (do NOT commit local DBs)
+*.sqlite3
+*.sqlite3-*
+*.db
+
+# Build artifacts
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local secrets
+*.env
+.env
