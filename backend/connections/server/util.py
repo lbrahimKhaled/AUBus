@@ -1,6 +1,6 @@
 import socket
-from DB.models.models import Person, Driver, Passenger
-from DB.Mock import saveRequest
+from backend.DB.models.models import Person, Passenger, Driver
+from backend.DB.Mock import saveRequest
 def bindServerSocket(portNb: int)->socket.socket:
     server : socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((socket.gethostbyname(socket.gethostname()), portNb))
