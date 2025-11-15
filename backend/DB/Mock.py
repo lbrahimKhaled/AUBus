@@ -15,10 +15,10 @@ def savePerson(x: str,y: int, connection: socket.socket):
 
 def getAllDrivers(location : str):
     return [
-    Driver("Ali", "192.168.1.2", 5050, "Ballout"),
-    Driver("Sara", "192.168.1.3", 5051, "Hamra"),
-    Driver("Omar", "192.168.1.4", 5052, "Jounieh"),
-    Driver("Nour", "192.168.1.5", 5053, "Achrafieh"),
+    Driver("Ali",  "192.168.1.2", 5050, "Ballout","08:00", 4.5),
+    Driver("Sara", "192.168.1.3", 5051, "Hamra",  "07:30", 4.8),
+    Driver("Omar", "192.168.1.4", 5052, "Jounieh",    "09:00", 4.2),
+    Driver("Nour", "192.168.1.5", 5053, "Achrafieh",  "08:45", 5.0),
 ]
 
 
