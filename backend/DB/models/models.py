@@ -9,8 +9,6 @@ class Person:
         
     def set_connection(self, conn: socket.socket):
         self.conn = conn
-        self.online = True
-
 
 class Passenger(Person):
     def __init__(self, name: str, ip: str, port: int, location: str):

@@ -1,9 +1,9 @@
 import socket
 import threading
-from util import bindServerSocket
-from handleClient import handleClient
-from backend.DB.models.models import Passenger
-from backend.DB.Mock import savePerson
+from .util import bindServerSocket
+from .handleClient import handleClient
+from ...DB.models.models import Passenger
+from ...DB.Mock import savePerson
 def welcomeServerPort():
     '''
     this is the welcoming port of the server it will receive the request and redirect is to other ports 
@@ -17,8 +17,8 @@ def welcomeServerPort():
     while True: # we will continiously accept any incoming requests
         connection, client_address = server.accept()
         # next we will dedicate a certain thread for handling this client 
-        clientP : Passenger = savePerson(client_address[0], client_address[1])
-        client_thread = threading.Thread(target = handleClient, args= (clientP, 0))
+        clientP : Passenger = savePerson(client_address[0], client_address[1], connection)
+        client_thread = threading.Thread(target = handleClient, args= (clientP,))
         client_thread.start()
 
 

@@ -2,17 +2,16 @@ import socket
 import threading
 import json
 
-from backend.connections.util import requestDrive
+from backend.connections.server.util import requestDrive
 #DB dependencies
 from backend.DB.Mock import getAllDrivers ### TO DO
 from backend.DB.Mock import handleDB
 from backend.DB.models.models import Passenger, Driver, Person
-from backend.connections.util import bindServerSocket
+from backend.connections.server.util import bindServerSocket
 
 def handleClient(person : Passenger):
     #logging in / registering
     handleClientCredentials(person)
-
     #while true for multiple requests i.e. we will be always listening for upcoming requests
     while True:
         driverList : list[Driver] = handleClientRequests(person)
@@ -23,7 +22,11 @@ def handleClient(person : Passenger):
         person.conn.sendall(driverJSON.encode('utf-8'))
 
 def handleClientRequests(person: Passenger)->list[Driver]:
+    print("waiting for request...")
+
     message = person.conn.recv(1024).decode('utf-8')
+    if message : person.conn.send("1".encode('utf-8')) #acknowledging the reception of the message
+    
     driver : list[Driver] = []
     if(message == "request=1"):
         driver = propagateRequest(person) # this will return the first driver that accepted our request
@@ -35,7 +38,7 @@ def propagateRequest(person: Passenger)->list[Driver]:
 
     actualDrivers : list[Driver] = []
 
-    #we can play here with asyncio and concurrency but meh     
+    # #we can play here with asyncio and concurrency but meh     
     for driver in availableDrivers:
         #establish a connection with the driver and ask for his permission:
         thread = threading.Thread(target = requestDrive, args = (person, driver, actualDrivers))
@@ -46,12 +49,15 @@ def propagateRequest(person: Passenger)->list[Driver]:
 
 
 
-def handleClientCredentials(person: Person)->None:
+def handleClientCredentials(person: Person):
     #considering that the GUI will give me 2 credentials consecutively 
-    username: str = person.conn.recv(1024).decode('utf-8')
-    pswrd:str = person.conn.recv(1024).decode('utf-8')
+    data = person.conn.recv(1024)
 
+    credentials = data.decode('utf-8').split("*")
+    username = credentials[0]
+    pswrd = credentials[1]
+    person.conn.send("1".encode('utf-8'))
     #where checkDB will
-    handleDB(username, pswrd)
+    # handleDB(username, pswrd)
     ##More to do's based on DB's implementation
 
