@@ -1,6 +1,6 @@
 # Server and Client Codes
 
-# Running / Testing some functions : 
+## Running / Testing some functions : 
 to be able to run things as a package and not get "no module named ..." run this command and not from the run button (it will run it as a module) 
 DO NOT NAVIGATE TO THE SPECIFIC FILE AND RUN IT
 ```bash
@@ -17,12 +17,25 @@ e.g. to import from backend/connections/server/util.py
 from backend.connections.server.util import func
 ```
 
-# Application Layer Protocol
+## IPaddress
+To get the IP address of your computer simply run
+### MacOS / Linux
+```bash
+ifconfig
+```
+And search for en0 you'll find it there
+
+### Windows
+```bash
+ipconfig
+```
+
+## Application Layer Protocol
 
 
 -for drivers we will have a  
 
-# Configuration
+## Configuration
 to install dependicies :
 ```bash
 cd backend/connections
