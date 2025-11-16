@@ -20,13 +20,17 @@ def handleClient(person : Passenger):
         driversData = [driver.__dict__ for driver in driverList]
         driverJSON = json.dumps(driversData)
         person.conn.sendall(driverJSON.encode('utf-8'))
+        if person.conn.recv(1024).decode('utf-8') != "1":
+            raise RuntimeError("Something went wrong when sending drivers data to the client")
+        print("Ack received")
 
 def handleClientRequests(person: Passenger)->list[Driver]:
     print("waiting for request...")
 
     message = person.conn.recv(1024).decode('utf-8')
-    if message : person.conn.send("1".encode('utf-8')) #acknowledging the reception of the message
-    
+    print("received msg: ", message)
+    person.conn.send("1".encode('utf-8')) #acknowledging the reception of the message
+    print("successful ack")
     driver : list[Driver] = []
     if(message == "request=1"):
         driver = propagateRequest(person) # this will return the first driver that accepted our request
@@ -44,7 +48,7 @@ def propagateRequest(person: Passenger)->list[Driver]:
         thread = threading.Thread(target = requestDrive, args = (person, driver, actualDrivers))
         thread.start()
     
-    return actualDrivers
+    return availableDrivers
 
 
 
@@ -57,6 +61,7 @@ def handleClientCredentials(person: Person):
     username = credentials[0]
     pswrd = credentials[1]
     person.conn.send("1".encode('utf-8'))
+    print("Credentials received:", username, pswrd)
     #where checkDB will
     # handleDB(username, pswrd)
     ##More to do's based on DB's implementation

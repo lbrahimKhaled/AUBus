@@ -1,3 +1,4 @@
+import socket
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox,
@@ -5,14 +6,33 @@ from PyQt5.QtWidgets import (
     QHeaderView, QMainWindow, QFrame, QRadioButton, QMessageBox, QSpinBox
 )
 from PyQt5.QtCore import Qt
+from backend.connections.client.client import connectToServer, sendCredentials, requestDrivers, receiveDrivers
+# ---------------------------- CONTROLLER ---------------------------- #
+#for practical reasons and so that we don't let the pages block each other we will have a common controller to glue the GUI to the backend
+class AUBusController:
+    def __init__(self, conn: socket.socket):
+        self.conn = conn
+
+    def login(self, username, password, mode):
+        sendCredentials(self.conn, username, password)
+
+    def getDrivers(self):
+        requestDrivers(self.conn)
+        drivers: list[dict] = receiveDrivers(self.conn)
+        return drivers
+
+    def sendMessage(self, msg):
+        # later you add your own protocol for chat messages
+        pass
 
 
 # ---------------------------- AUTH PAGE ---------------------------- #
 class AuthPage(QWidget):
     """Unified Login & Register Page"""
-    def __init__(self, parent):
+    def __init__(self, parent, controller: AUBusController):
         super().__init__()
         self.parent = parent
+        self.controller = controller
         layout = QVBoxLayout()
 
         title = QLabel("<h1 style='color:#781414;'>AUBus</h1>")
@@ -77,6 +97,7 @@ class AuthPage(QWidget):
                 "name": self.name.text(),
                 "email": self.email.text(),
                 "username": self.username.text(),
+                "password": self.password.text(),
                 "area": self.area.currentText(),
                 "rating": 0,
                 "role": None
@@ -89,6 +110,7 @@ class AuthPage(QWidget):
                 "name": self.username.text(),
                 "email": "student@aub.edu.lb",
                 "username": self.username.text(),
+                "password": self.password.text(),
                 "area": "Hamra",
                 "rating": 0,
                 "role": None
@@ -98,9 +120,10 @@ class AuthPage(QWidget):
 
 # ---------------------------- PROFILE PAGE ---------------------------- #
 class ProfilePage(QWidget):
-    def __init__(self, parent):
+    def __init__(self, parent, controller: AUBusController):
         super().__init__()
         self.parent = parent
+        self.controller = controller
         layout = QVBoxLayout()
         title = QLabel("<h1 style='color:#781414;'>Profile</h1>")
         title.setAlignment(Qt.AlignCenter)
@@ -151,6 +174,8 @@ class ProfilePage(QWidget):
         else:
             QMessageBox.warning(self, "Selection Required", "Please select Driver or Passenger.")
 
+        # it is best to resend the credentials if the status of the person changed
+        self.controller.login(self.parent.user_data.get('username',''), self.parent.user_data.get('password',''), self.parent.user_data.get('mode',''))
 
 # ---------------------------- SCHEDULE PAGE ---------------------------- #
 class SchedulePage(QWidget):
@@ -201,8 +226,9 @@ class SchedulePage(QWidget):
 
 # ---------------------------- DASHBOARD PAGE ---------------------------- #
 class DashboardPage(QWidget):
-    def __init__(self, parent):
+    def __init__(self, parent, controller: AUBusController):
         super().__init__()
+        self.controller = controller
         self.parent = parent
         layout = QVBoxLayout()
         title = QLabel("<h1 style='color:#781414;'>Dashboard</h1>")
@@ -242,15 +268,19 @@ class DashboardPage(QWidget):
         self.setLayout(layout)
 
     def show_drivers(self):
-        drivers = [
-            ("Ali Hassan", "Hamra", "08", "⭐⭐⭐⭐"),
-            ("Rami Khoury", "Verdun", "09", "⭐⭐⭐"),
-            ("Maya Saab", "Achrafieh", "10", "⭐⭐⭐⭐⭐")
-        ]
+
+        drivers : list[dict] = self.controller.getDrivers()
+
         self.table.setRowCount(len(drivers))
-        for i, (n, a, t, r) in enumerate(drivers):
-            for j, val in enumerate([n, a, t, r]):
+        for i, driver in enumerate(drivers):
+            name = str(driver.get("name", "N/A"))
+            area = str(driver.get("location", "N/A"))
+            departure = str(driver.get("departure", "N/A"))
+            rating = str(driver.get("rating", "N/A"))
+
+            for j, val in enumerate([name, area, departure, rating]):
                 self.table.setItem(i, j, QTableWidgetItem(val))
+
         self.table.setVisible(True)
 
     def open_chat(self, row, _):
@@ -357,13 +387,14 @@ class RatingPage(QWidget):
 
 # ---------------------------- MAIN APP ---------------------------- #
 class AUBusApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, conn : socket.socket):
         super().__init__()
         self.setWindowTitle("AUBus - Ride Sharing for AUB Students")
         self.setGeometry(200, 100, 950, 600)
         self.user_data = {}
         self.chat_partner = None
         self.chat_started = False
+        self.controller = AUBusController(conn)
 
         container = QWidget()
         layout = QHBoxLayout(container)
@@ -393,10 +424,10 @@ class AUBusApp(QMainWindow):
 
         self.stack = QStackedWidget()
         self.pages = {
-            "auth": AuthPage(self),
-            "profile": ProfilePage(self),
+            "auth": AuthPage(self, self.controller),
+            "profile": ProfilePage(self, self.controller),
             "schedule": SchedulePage(self),
-            "dashboard": DashboardPage(self),
+            "dashboard": DashboardPage(self, self.controller),
             "chat": ChatPage(self),
             "rating": RatingPage(self)
         }
@@ -444,7 +475,9 @@ class AUBusApp(QMainWindow):
 
 # ---------------------------- RUN APP ---------------------------- #
 if __name__ == "__main__":
+    ip: str = "192.168.1.142"#(input("enter IP: "))
+    connection : socket.socket = connectToServer(ip)
     app = QApplication(sys.argv)
-    window = AUBusApp()
+    window = AUBusApp(connection)
     window.show()
     sys.exit(app.exec_())
