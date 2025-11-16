@@ -1,47 +1,37 @@
 import socket
 
 class Person:
-    def __init__(self, name: str, ip: str, port: int, location: str):
-        self.name = name
-        self.ip = ip
-        self.port = port
-        self.location = location
-        
-    def set_connection(self, conn: socket.socket):
-        self.conn = conn
-
-class Passenger(Person):
-    def __init__(self, name: str, ip: str, port: int, location: str):
-        super().__init__(name, ip, port, location)
-        self.connection: socket.socket | None = None
-        self.online: bool = False
-
-    def set_connection(self, conn: socket.socket):
-        self.conn = conn
-        self.online = True
-
-
-class Driver(Person):
     def __init__(
         self,
         name: str,
         ip: str,
         port: int,
-        area: str,
-        departure: str,
-        rating: float = 0.0,
+        location: str,               # area / location (works for both)
+        departure: str,  # driver-only, e.g. "08:00"
+        is_driver: bool = False,     # True = driver, False = passenger
+        rating: float = 0.0,              # rating for driver or passenger
     ):
-        super().__init__(name, ip, port, area)
-
-        # These are the ONLY fields you care about on the client:
-        self.name = name          # already in Person, but explicit doesn’t hurt
-        self.departure = departure  # e.g. "08:00"
-        self.rating = rating      # e.g. 4.5
-
-        # Internal / non-serializable stuff
-        self._connection: socket.socket | None = None
-        self.online: bool = False
+        self.name = name
+        self.ip = ip
+        self.port = port
+        self.location = location      # for drivers this is their area
+        self.is_driver = is_driver
+        self.departure = departure
+        self.rating = rating
+        self.online = False
 
     def set_connection(self, conn: socket.socket):
-        self._connection = conn
+        self.conn = conn
         self.online = True
+
+    def to_dict(self) -> dict:
+        """Safe JSON-serializable representation to send to clients."""
+        return {
+            "name": self.name,
+            "ip": self.ip,
+            "port": self.port,
+            "location": self.location,
+            "is_driver": self.is_driver,
+            "departure": self.departure,
+            "rating": self.rating,
+        }

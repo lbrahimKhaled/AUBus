@@ -6,4 +6,5 @@ It provides an interactive front-end that connects to the backend server to visu
 ## Configuration
 ```bash
 pip install pyQt5
+pip install requests
 ```

@@ -1,12 +1,12 @@
 import socket
-from backend.DB.models.models import Person, Passenger, Driver
+from backend.DB.models.models import Person
 from backend.DB.Mock import saveRequest
 def bindServerSocket(portNb: int)->socket.socket:
     server : socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((socket.gethostbyname(socket.gethostname()), portNb))
     return server
 
-def requestDrive(p: Passenger , d :Driver, L : list[Driver])->bool:
+def requestDrive(p: Person , d :Person, L : list[Person])->bool:
     """
     this function will save the messages to the DB for offline Drivers and will contact Directly online drivers
     will return true if the function is correctly executed and false otherwise (since this is good practice)

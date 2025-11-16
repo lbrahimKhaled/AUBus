@@ -1,28 +1,45 @@
 import socket
+import requests
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox,
     QVBoxLayout, QHBoxLayout, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMainWindow, QFrame, QRadioButton, QMessageBox, QSpinBox
+    QHeaderView, QMainWindow, QFrame, QRadioButton, QMessageBox, QSpinBox, QSplitter
 )
 from PyQt5.QtCore import Qt
-from backend.connections.client.client import connectToServer, sendCredentials, requestDrivers, receiveDrivers
+from backend.connections.client.client import connectToServer, sendCredentials, requestOther, receiveOther, changeMsg
+
 # ---------------------------- CONTROLLER ---------------------------- #
 #for practical reasons and so that we don't let the pages block each other we will have a common controller to glue the GUI to the backend
 class AUBusController:
     def __init__(self, conn: socket.socket):
         self.conn = conn
 
-    def login(self, username, password, mode):
-        sendCredentials(self.conn, username, password)
+    def login(self, username, password, mode)->bool:
+        return sendCredentials(self.conn, username, password)
+    
+    def changeMode(self):
+        changeMsg(self.conn)
 
-    def getDrivers(self):
-        requestDrivers(self.conn)
-        drivers: list[dict] = receiveDrivers(self.conn)
+    def getOther(self):
+        requestOther(self.conn)
+        drivers: list[dict] = receiveOther(self.conn)
         return drivers
+    
+    def get_weather(self, location: str)->str:
+        try:
+            api_key = "34b53f4628054c4bbf2154149251611"
+            url = f"http://api.weatherapi.com/v1/current.json?key={api_key}&q={location}&aqi=no"
+            response = requests.get(url)
+            data = response.json()
+            temp = data["current"]["temp_c"]
+            description = data["current"]["condition"]["text"].capitalize()
+            return f"🌤️ {temp:.1f}°C, {description} in {location}"
+        except Exception:
+            return "🌤️ Weather unavailable"
 
     def sendMessage(self, msg):
-        # later you add your own protocol for chat messages
+
         pass
 
 
@@ -103,8 +120,8 @@ class AuthPage(QWidget):
                 "role": None
             }
         else:
-            if not self.username.text():
-                QMessageBox.warning(self, "Missing Info", "Please enter your username.")
+            if not self.username.text() or not self.password.text():
+                QMessageBox.warning(self, "Missing Info", "Please enter your credentials")
                 return
             self.parent.user_data = {
                 "name": self.username.text(),
@@ -115,6 +132,17 @@ class AuthPage(QWidget):
                 "rating": 0,
                 "role": None
             }
+        self.parent.weather_label.setText(self.controller.get_weather(self.parent.user_data.get('area','') if self.parent.user_data.get("area") in self.parent.user_data else "Beirut"))
+        
+        #sending username and password to the backend
+        auth: bool = self.controller.login(
+            self.parent.user_data.get('username',''),
+            self.parent.user_data.get('password',''),
+            self.parent.user_data.get('mode','')
+        )
+        if(not auth):
+            self.submit_action()
+        self.parent.user_data["authenticated"] = auth
         self.parent.goto_page("profile")
 
 
@@ -136,6 +164,7 @@ class ProfilePage(QWidget):
         self.driver_radio = QRadioButton("Driver")
         self.passenger_radio = QRadioButton("Passenger")
         go_btn = QPushButton("Continue")
+        self.parent.user_data["role"] = "passenger"
         go_btn.clicked.connect(self.set_role)
 
         layout.addStretch()
@@ -166,17 +195,15 @@ class ProfilePage(QWidget):
 
     def set_role(self):
         if self.driver_radio.isChecked():
+            if(self.parent.user_data["role"] != "driver"): self.controller.changeMode()
             self.parent.user_data["role"] = "driver"
             self.parent.goto_page("schedule")
         elif self.passenger_radio.isChecked():
+            if(self.parent.user_data["role"] != "passenger"): self.controller.changeMode()
             self.parent.user_data["role"] = "passenger"
             self.parent.goto_page("dashboard")
         else:
             QMessageBox.warning(self, "Selection Required", "Please select Driver or Passenger.")
-
-        # it is best to resend the credentials if the status of the person changed
-        self.controller.login(self.parent.user_data.get('username',''), self.parent.user_data.get('password',''), self.parent.user_data.get('mode',''))
-
 # ---------------------------- SCHEDULE PAGE ---------------------------- #
 class SchedulePage(QWidget):
     def __init__(self, parent):
@@ -268,16 +295,13 @@ class DashboardPage(QWidget):
         self.setLayout(layout)
 
     def show_drivers(self):
-
-        drivers : list[dict] = self.controller.getDrivers()
-
+        drivers : list[dict] = self.controller.getOther()
         self.table.setRowCount(len(drivers))
         for i, driver in enumerate(drivers):
             name = str(driver.get("name", "N/A"))
             area = str(driver.get("location", "N/A"))
             departure = str(driver.get("departure", "N/A"))
             rating = str(driver.get("rating", "N/A"))
-
             for j, val in enumerate([name, area, departure, rating]):
                 self.table.setItem(i, j, QTableWidgetItem(val))
 
@@ -297,46 +321,158 @@ class DashboardPage(QWidget):
 
 # ---------------------------- CHAT PAGE ---------------------------- #
 class ChatPage(QWidget):
-    def __init__(self, parent):
+    """Chat page adapts based on role (Driver gets split view, Passenger sees only chat)"""
+    def __init__(self, parent, controller:AUBusController):
         super().__init__()
         self.parent = parent
-        self.header = QLabel()
+        self.controller = controller
+        # Left panel: Chat
+        self.header = QLabel("No active chat")
         self.header.setAlignment(Qt.AlignCenter)
         self.header.setStyleSheet("background-color:#781414; color:white; padding:10px;")
 
         self.chat_box = QTextEdit()
         self.chat_box.setReadOnly(True)
-        msg_layout = QHBoxLayout()
+
         self.msg_input = QLineEdit()
         self.msg_input.setPlaceholderText("Type message...")
         send_btn = QPushButton("Send")
-        send_btn.clicked.connect(lambda: self.chat_box.append(f"You: {self.msg_input.text()}"))
+        send_btn.clicked.connect(self.send_message)
+
+        msg_layout = QHBoxLayout()
         msg_layout.addWidget(self.msg_input)
         msg_layout.addWidget(send_btn)
 
-        rate_btn = QPushButton("Rate")
-        rate_btn.clicked.connect(self.open_rating)
+        self.rate_btn = QPushButton("Rate")
+        self.rate_btn.clicked.connect(self.open_rating)
 
-        layout = QVBoxLayout()
-        layout.addWidget(self.header)
-        layout.addWidget(self.chat_box)
-        layout.addLayout(msg_layout)
-        layout.addWidget(rate_btn, alignment=Qt.AlignRight)
-        self.setLayout(layout)
+        left_layout = QVBoxLayout()
+        left_layout.addWidget(self.header)
+        left_layout.addWidget(self.chat_box)
+        left_layout.addLayout(msg_layout)
+        left_layout.addWidget(self.rate_btn, alignment=Qt.AlignRight)
+
+        left_widget = QWidget()
+        left_widget.setLayout(left_layout)
+
+        # Right panel (only for drivers): Passenger list
+        self.passenger_table = QTableWidget(0, 3)
+        self.passenger_table.setHorizontalHeaderLabels(["Passenger", "Area", "Rating"])
+        self.passenger_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.passenger_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.passenger_table.cellDoubleClicked.connect(self.select_passenger)
+
+        right_widget = self.create_right_panel()
+
+        # Split layout (driver sees both halves)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.addWidget(left_widget)
+        self.splitter.addWidget(right_widget)
+
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.splitter)
+        self.setLayout(main_layout)
+
+    def populate_passenger_table(self):
+        """Temporary mock data — replace later with controller call"""
+        self.passengers = []
+        self.passengers = self.controller.getOther()
+
+        # Clear and refill table
+        self.passenger_table.setRowCount(len(self.passengers))
+        for i, driver in enumerate(self.passengers):
+            name = str(driver.get("name", "N/A"))
+            area = str(driver.get("location", "N/A"))
+            rating = str(driver.get("rating", "N/A"))
+
+            for j, val in enumerate([name, area, rating]):
+                self.passenger_table.setItem(i, j, QTableWidgetItem(val))
+
+    def create_right_panel(self):
+        """Creates the right panel with the passenger table and refresh button"""
+        right_layout = QVBoxLayout()
+
+        title = QLabel("<h3 style='color:#781414;'>Ride Requests</h3>")
+        title.setAlignment(Qt.AlignCenter)
+
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #781414;
+                color: white;
+                border-radius: 5px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #a21d1d;
+            }
+        """)
+        refresh_btn.clicked.connect(self.populate_passenger_table)
+
+        right_layout.addWidget(title)
+        right_layout.addWidget(refresh_btn, alignment=Qt.AlignCenter)
+        right_layout.addWidget(self.passenger_table)
+
+        right_widget = QWidget()
+        right_widget.setLayout(right_layout)
+        return right_widget
+
+    
+
+    def select_passenger(self, row, _):
+        """Driver double-clicks passenger to open chat"""
+        # Ensure list is valid
+        if not hasattr(self, "passengers") or row >= len(self.passengers):
+            QMessageBox.warning(self, "Error", "No passenger data found.")
+            return
+
+        passenger = self.passengers[row]
+
+        # Prevent chatting with yourself
+        if passenger.get("name") == self.parent.user_data.get("username"):
+            QMessageBox.warning(self, "Invalid", "You cannot chat with yourself.")
+            return
+
+        # Mark chat state
+        self.parent.chat_partner = passenger
+        self.parent.chat_started = True
+
+        # Update chat header and clear previous chat
+        self.chat_box.clear()
+        self.header.setText(
+            f"Chatting with: <b>{passenger.get('name')}</b> | "
+            f"Area: {passenger.get('location', passenger.get('area','N/A'))} | "
+            f"Rating: {passenger.get('rating','N/A')}"
+        )
+
+        # Provide initial system message
+        self.chat_box.append(f"🟢 Connected to {passenger.get('name')}.\nYou can start messaging now.")
 
     def refresh_chat_header(self):
+        role = self.parent.user_data.get("role")
         partner = self.parent.chat_partner
         if not partner:
             self.header.setText("No active chat")
         else:
-            self.header.setText(f"Chatting with: <b>{partner['name']}</b> | Area: {partner['area']} | Rating: {partner['rating']}")
+            self.header.setText(
+                f"Chatting with: <b>{partner['name']}</b> | Area: {partner['area']} | Rating: {partner['rating']}"
+            )
+        # Hide right side for passengers
+        is_driver = (role == "driver")
+        self.splitter.widget(1).setVisible(is_driver)
+
+    def send_message(self):
+        msg = self.msg_input.text().strip()
+        if msg:
+            self.chat_box.append(f"You: {msg}")
+            self.msg_input.clear()
 
     def open_rating(self):
         if not self.parent.chat_started or not self.parent.chat_partner:
             QMessageBox.warning(self, "No Chat", "You must chat with someone before rating.")
             return
         self.parent.goto_page("rating")
-
 
 # ---------------------------- RATING PAGE ---------------------------- #
 class RatingPage(QWidget):
@@ -387,7 +523,7 @@ class RatingPage(QWidget):
 
 # ---------------------------- MAIN APP ---------------------------- #
 class AUBusApp(QMainWindow):
-    def __init__(self, conn : socket.socket):
+    def __init__(self, conn: socket.socket):
         super().__init__()
         self.setWindowTitle("AUBus - Ride Sharing for AUB Students")
         self.setGeometry(200, 100, 950, 600)
@@ -398,13 +534,15 @@ class AUBusApp(QMainWindow):
 
         container = QWidget()
         layout = QHBoxLayout(container)
+
+        # Sidebar
         nav = QFrame()
         nav.setFixedWidth(200)
         nav.setStyleSheet("background-color:#781414; color:white;")
         nav_layout = QVBoxLayout(nav)
         nav_layout.addWidget(QLabel("<h2 style='color:white;'>AUBus</h2>"))
 
-        buttons = {
+        self.buttons = {
             "Auth": "auth",
             "Profile": "profile",
             "Schedule": "schedule",
@@ -412,7 +550,8 @@ class AUBusApp(QMainWindow):
             "Chat": "chat",
             "Rating": "rating"
         }
-        for name, page in buttons.items():
+
+        for name, page in self.buttons.items():
             btn = QPushButton(name)
             btn.setStyleSheet("""
                 QPushButton {color:white; background:none; border:none; text-align:left; padding:8px;}
@@ -422,13 +561,14 @@ class AUBusApp(QMainWindow):
             nav_layout.addWidget(btn)
         nav_layout.addStretch()
 
+        # Stacked pages
         self.stack = QStackedWidget()
         self.pages = {
             "auth": AuthPage(self, self.controller),
             "profile": ProfilePage(self, self.controller),
             "schedule": SchedulePage(self),
             "dashboard": DashboardPage(self, self.controller),
-            "chat": ChatPage(self),
+            "chat": ChatPage(self, self.controller),
             "rating": RatingPage(self)
         }
         for p in self.pages.values():
@@ -436,9 +576,30 @@ class AUBusApp(QMainWindow):
 
         layout.addWidget(nav)
         layout.addWidget(self.stack, stretch=1)
+
+        layout.addWidget(nav)
+        layout.addWidget(self.stack, stretch=1)
+
+        # Create weather label INSIDE sidebar (at the bottom)
+        self.weather_label = QLabel("🌤️ 23°C in Beirut")
+        self.weather_label.setText(self.controller.get_weather(self.user_data.get('area','') if self.user_data.get("area") in self.user_data else "Beirut"))
+        self.weather_label.setAlignment(Qt.AlignCenter)
+        self.weather_label.setStyleSheet("""
+            color: white;
+            padding: 8px;
+            font-size: 13px;
+            border-top: 1px solid #a21d1d;
+        """)
+
+        # Add the weather label after all buttons (bottom of sidebar)
+        nav_layout.addStretch()
+        nav_layout.addWidget(self.weather_label)
+
         self.setCentralWidget(container)
+
         self.goto_page("auth")
 
+        # Styling
         self.setStyleSheet("""
             QWidget { background-color: #fdfdfd; font-family: 'Segoe UI'; color: #222; }
             QLabel { font-size: 16px; }
@@ -461,18 +622,25 @@ class AUBusApp(QMainWindow):
         """)
 
     def goto_page(self, name):
+        """Navigate safely (block only before authentication)"""
+
+        # Prevent accessing any page except Auth before login/register
+        if not self.user_data.get("authenticated", False) and name != "auth":
+            QMessageBox.warning(self, "Access Denied", "Please log in or register first.")
+            return
+
+        # Once authenticated, all pages are allowed
         if name == "profile":
             self.pages["profile"].refresh_info()
-        if name == "chat":
+        elif name == "chat":
             self.pages["chat"].refresh_chat_header()
-        if name == "rating":
+        elif name == "rating":
             self.pages["rating"].refresh_role()
-        if name == "schedule" and self.user_data.get("role") != "driver":
+        elif name == "schedule" and self.user_data.get("role") != "driver":
             QMessageBox.warning(self, "Access Denied", "Only drivers can access Schedule.")
             return
+
         self.stack.setCurrentWidget(self.pages[name])
-
-
 # ---------------------------- RUN APP ---------------------------- #
 if __name__ == "__main__":
     ip: str = "192.168.1.142"#(input("enter IP: "))

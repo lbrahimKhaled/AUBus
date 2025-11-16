@@ -2,7 +2,7 @@ import socket
 import threading
 from .util import bindServerSocket
 from .handleClient import handleClient
-from ...DB.models.models import Passenger
+from ...DB.models.models import Person
 from ...DB.Mock import savePerson
 def welcomeServerPort():
     '''
@@ -17,7 +17,7 @@ def welcomeServerPort():
     while True: # we will continiously accept any incoming requests
         connection, client_address = server.accept()
         # next we will dedicate a certain thread for handling this client 
-        clientP : Passenger = savePerson(client_address[0], client_address[1], connection)
+        clientP : Person = savePerson(client_address[0], client_address[1], connection)
         client_thread = threading.Thread(target = handleClient, args= (clientP,))
         client_thread.start()
 
