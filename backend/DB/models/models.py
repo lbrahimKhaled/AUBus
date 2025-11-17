@@ -1,37 +1,97 @@
+from dataclasses import dataclass
 import socket
+from typing import Optional
 
-class Person:
+@dataclass
+class User:
     def __init__(
         self,
-        name: str,
-        ip: str,
-        port: int,
-        location: str,               # area / location (works for both)
-        departure: str,  # driver-only, e.g. "08:00"
-        is_driver: bool = False,     # True = driver, False = passenger
-        rating: float = 0.0,              # rating for driver or passenger
+        id: int = 0,
+        name: str = "",
+        email: str = "",
+        username: str = "",
+        pass_hash: str = "",
+        area: str = "",
+        is_driver: bool = True,
+        rating_avg: float = 0.0,
+        rating_count: int = 0,
+        created_at: str = "",
+        ip: str = "",
+        port: int = 0,
     ):
+        # DB fields
+        self.id = id
         self.name = name
+        self.email = email
+        self.username = username
+        self.pass_hash = pass_hash
+        self.area = area
+        self.is_driver = is_driver
+        self.rating_avg = rating_avg
+        self.rating_count = rating_count
+        self.created_at = created_at
+
+        # Network fields
         self.ip = ip
         self.port = port
-        self.location = location      # for drivers this is their area
-        self.is_driver = is_driver
-        self.departure = departure
-        self.rating = rating
+
+        # Runtime-only fields
         self.online = False
 
+    @classmethod
+    def default(cls):
+        """Default empty user (explicit alternative constructor)."""
+        return cls()
+
     def set_connection(self, conn: socket.socket):
+        """Attach a live socket connection to this user."""
         self.conn = conn
         self.online = True
 
     def to_dict(self) -> dict:
-        """Safe JSON-serializable representation to send to clients."""
+        """Safe JSON representation for sending to clients."""
         return {
+            "id": self.id,
             "name": self.name,
+            "email": self.email,
+            "username": self.username,
+            "area": self.area,
+            "is_driver": self.is_driver,
+            "rating_avg": self.rating_avg,
+            "rating_count": self.rating_count,
+            "created_at": self.created_at,
             "ip": self.ip,
             "port": self.port,
-            "location": self.location,
-            "is_driver": self.is_driver,
-            "departure": self.departure,
-            "rating": self.rating,
+            "online": self.online,
         }
+    
+
+@dataclass
+class Schedule:
+    id: int
+    user_id: int
+    weekday: int            # 0=Monday ... 6=Sunday
+    depart_time: str        # "HH:MM" (24h format, e.g. "07:30")
+    direction: str          # "toAUB" or "fromAUB"
+
+
+@dataclass
+class RideRequest:
+    id: int
+    rider_id: int
+    area: str
+    direction: str
+    target_time: str        # "YYYY-MM-DDTHH:MM"
+    status: str             # "open", "accepted", "declined", "expired"
+    driver_id: Optional[int]
+    created_at: str         # ISO timestamp string
+
+
+@dataclass
+class Rating:
+    id: int
+    rater_id: int
+    ratee_id: int
+    stars: int              # 1..5
+    comment: str
+    created_at: str
