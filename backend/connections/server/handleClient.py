@@ -6,7 +6,7 @@ import time
 
 #DB dependencies
 from backend.DB.db import add_driver_request, find_candidate_drivers, getRequests, delete_driver_requests_for_user, add_rating, get_user_by_username
-from backend.DB.db import authenticate_user, create_user, add_schedule, update_is_driver_by_username
+from backend.DB.db import authenticate_user, create_user, add_schedule, update_is_driver_by_username, add_emergency_report, update_user_location
 from backend.DB.models.models import User
 from backend.connections.client.client import start_driver_listener
 
@@ -24,13 +24,26 @@ def handleClient(person : User):
             message = person.conn.recv(1024).decode('utf-8')
             print("received msg: ", message)
             person.conn.send("1".encode('utf-8')) #acknowledging the reception of the message
-            if message == "request=1" and person.is_driver:#drive requests
-                # Driver wants list of riders that requested them
-                driverRequest(person)
+            if message.startswith("request"):
+                # Expected format: request|drivers|<area> or request|passengers
+                target = "drivers"
+                area_filter = None
+                if "|" in message:
+                    parts = message.split("|")
+                    if len(parts) > 1 and parts[1]:
+                        target = parts[1]
+                    if len(parts) > 2:
+                        area_filter = parts[2].strip() or None
+                elif "=" in message:
+                    # backward compatibility: request=<area>
+                    _, area_raw = message.split("=", 1)
+                    area_filter = area_raw.strip() or None
 
-            elif message == "request=1" and not person.is_driver: # passenger requesting drivers
-                drivers : list[User] = propagateRequest(person)
-                sendDriversToPassenger(person, drivers)
+                if target == "passengers" and person.is_driver:
+                    driverRequest(person)
+                else:
+                    drivers : list[User] = propagateRequest(person, area_filter)
+                    sendDriversToPassenger(person, drivers)
 
             elif message == "change": # weather requests (TO DO LATER)
                 person.is_driver = not person.is_driver
@@ -48,9 +61,12 @@ def handleClient(person : User):
                 depart_time = payload.get("depart_time")
                 direction = payload.get("direction")
                 # now we will add this schedule to the DB
-                person.conn.send("1".encode("utf-8"))
-                print("Adding schedule:", weekday, depart_time, direction)
-                add_schedule(person.id, weekday, depart_time, direction)
+                try:
+                    add_schedule(person.id, weekday, depart_time, direction)
+                    person.conn.send("1".encode("utf-8"))
+                except Exception as e:
+                    print("Error adding schedule:", e)
+                    person.conn.send("0".encode("utf-8"))
 
             elif message.startswith("chat_ok"):
                 target = message.split("*")[1]
@@ -75,6 +91,63 @@ def handleClient(person : User):
                             success = True
                         except Exception as e:
                             print("Error adding rating:", e)
+                person.conn.send(("1" if success else "0").encode("utf-8"))
+
+            elif message == "emergency":
+                # payload contains client-side context for the emergency
+                data = person.conn.recv(8192)
+                success = False
+                try:
+                    payload = json.loads(data.decode("utf-8"))
+                    partner_info = payload.get("chat_partner") or {}
+                    partner_username = partner_info.get("username", "")
+                    partner_user = get_user_by_username(partner_username) if partner_username else None
+                    partner_id = partner_user.id if partner_user else None
+                    partner_role = (
+                        "driver" if partner_user and partner_user.is_driver else partner_info.get("role", "")
+                    )
+                    add_emergency_report(
+                        reporter_id=person.id,
+                        reporter_username=person.username,
+                        reporter_role="driver" if person.is_driver else "passenger",
+                        partner_id=partner_id,
+                        partner_username=partner_username,
+                        partner_role=partner_role,
+                        raw_context=json.dumps(payload),
+                    )
+                    success = True
+                except Exception as e:
+                    print("Error handling emergency report:", e)
+                person.conn.send(("1" if success else "0").encode("utf-8"))
+            elif message == "update_location":
+                data = person.conn.recv(4096)
+                success = False
+                try:
+                    payload = json.loads(data.decode("utf-8"))
+                    latitude = payload.get("latitude")
+                    longitude = payload.get("longitude")
+                    city = payload.get("city")
+                    country = payload.get("country")
+                    area = payload.get("area")
+                    # Update area to city if provided so matching uses latest city
+                    update_user_location(
+                        person.id,
+                        area=area or city or person.area,
+                        latitude=latitude,
+                        longitude=longitude,
+                        city=city,
+                        country=country,
+                    )
+                    # Refresh in-memory user info
+                    person.latitude = latitude
+                    person.longitude = longitude
+                    person.city = city
+                    person.country = country
+                    person.area = area or city or person.area
+                    online_users[person.username] = person
+                    success = True
+                except Exception as e:
+                    print("Error updating location:", e)
                 person.conn.send(("1" if success else "0").encode("utf-8"))
     finally:
         # cleanup DB and in-memory tracking
@@ -137,20 +210,21 @@ def driverRequest(person: User):
     sendPassengerstoDriver(person, passengers)
 
 
-def propagateRequest(person: User)->list[User]:
+def propagateRequest(person: User, area_filter: str | None = None)->list[User]:
     # Drop old requests for this rider so we only keep the fresh ones
     try:
         delete_driver_requests_for_user(person.id)
     except Exception as e:
         print("Error cleaning old requests for rider:", e)
 
-    availableDrivers : list[User] = find_candidate_drivers(person)
+    availableDrivers : list[User] = find_candidate_drivers(person, area_filter)
     actualDrivers: list[User] = []
     print(online_users)
     for driver in availableDrivers:
         add_driver_request(person.id, driver.id)
-        if online_users.get(driver.username) is not None:
-            actualDrivers.append(online_users[driver.username])
+        online_driver = online_users.get(driver.username)
+        if online_driver is not None and getattr(online_driver, "is_driver", False):
+            actualDrivers.append(online_driver)
 
     return actualDrivers
 

@@ -48,7 +48,11 @@ def init_db() -> None:
                 is_driver INTEGER NOT NULL DEFAULT 0,
                 rating_avg REAL NOT NULL DEFAULT 0.0,
                 rating_count INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                latitude REAL,
+                longitude REAL,
+                city TEXT,
+                country TEXT
             );
 
             CREATE TABLE IF NOT EXISTS schedules (
@@ -95,8 +99,38 @@ def init_db() -> None:
                 FOREIGN KEY (rider_id) REFERENCES users(id),
                 FOREIGN KEY (driver_id) REFERENCES users(id)
             );
+
+            CREATE TABLE IF NOT EXISTS emergencies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reporter_id INTEGER,
+                reporter_username TEXT,
+                reporter_role TEXT,
+                partner_id INTEGER,
+                partner_username TEXT,
+                partner_role TEXT,
+                raw_context TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (reporter_id) REFERENCES users(id),
+                FOREIGN KEY (partner_id) REFERENCES users(id)
+            );
             """
         )
+
+        # Ensure location columns exist for older DBs
+        cur.execute("PRAGMA table_info(users);")
+        existing_cols = {row[1] for row in cur.fetchall()}
+        for col_sql, col_name in [
+            ("ALTER TABLE users ADD COLUMN latitude REAL;", "latitude"),
+            ("ALTER TABLE users ADD COLUMN longitude REAL;", "longitude"),
+            ("ALTER TABLE users ADD COLUMN city TEXT;", "city"),
+            ("ALTER TABLE users ADD COLUMN country TEXT;", "country"),
+        ]:
+            if col_name not in existing_cols:
+                try:
+                    cur.execute(col_sql)
+                except sqlite3.OperationalError:
+                    # Column might have been added concurrently; ignore
+                    pass
 
         conn.commit()
         conn.close()
@@ -163,6 +197,43 @@ def delete_driver_requests_for_user(user_id: int) -> None:
             WHERE rider_id = ? OR driver_id = ?
             """,
             (user_id, user_id),
+        )
+        conn.commit()
+        conn.close()
+
+
+def add_emergency_report(
+    reporter_id: Optional[int],
+    reporter_username: str,
+    reporter_role: str,
+    partner_id: Optional[int],
+    partner_username: str,
+    partner_role: str,
+    raw_context: str,
+) -> None:
+    """Persist an emergency report with as much context as available."""
+    with DB_LOCK:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO emergencies (
+                reporter_id, reporter_username, reporter_role,
+                partner_id, partner_username, partner_role,
+                raw_context, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                reporter_id,
+                reporter_username,
+                reporter_role,
+                partner_id,
+                partner_username,
+                partner_role,
+                raw_context,
+                datetime.utcnow().isoformat(timespec="seconds"),
+            ),
         )
         conn.commit()
         conn.close()
@@ -254,6 +325,10 @@ def _row_to_user(row: sqlite3.Row) -> User:
         rating_avg=row["rating_avg"],
         rating_count=row["rating_count"],
         created_at=row["created_at"],
+        latitude=row["latitude"] if "latitude" in row.keys() else None,
+        longitude=row["longitude"] if "longitude" in row.keys() else None,
+        city=row["city"] if "city" in row.keys() else "",
+        country=row["country"] if "country" in row.keys() else "",
     )
 
 
@@ -283,6 +358,49 @@ def update_is_driver_by_username(username: str, new_value: bool) -> None:
             conn.commit()
         finally:
             conn.close()
+
+def update_user_location(
+    user_id: int,
+    area: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    city: str | None = None,
+    country: str | None = None,
+) -> None:
+    """
+    Update persisted location fields for a user.
+    """
+    with DB_LOCK:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        fields = []
+        values = []
+        if area is not None:
+            fields.append("area = ?")
+            values.append(area)
+        if latitude is not None:
+            fields.append("latitude = ?")
+            values.append(latitude)
+        if longitude is not None:
+            fields.append("longitude = ?")
+            values.append(longitude)
+        if city is not None:
+            fields.append("city = ?")
+            values.append(city)
+        if country is not None:
+            fields.append("country = ?")
+            values.append(country)
+
+        if not fields:
+            conn.close()
+            return
+
+        values.append(user_id)
+        sql = f"UPDATE users SET {', '.join(fields)} WHERE id = ?"
+        cur.execute(sql, values)
+        conn.commit()
+        conn.close()
 
 def get_user_by_id(user_id: int) -> Optional[User]:
     with DB_LOCK:
@@ -516,26 +634,42 @@ def normalize_time(time_str: str) -> str:
     return dt.strftime("%H:%M")
 
 
-def find_candidate_drivers(user: User) -> list[User]:
+def find_candidate_drivers(user: User, area_filter: str | None = None) -> list[User]:
     """
     Return a list of User objects representing all drivers
-    in the same area as the given user.
+    filtered by area.
+    area_filter:
+        None/"" -> use user's area
+        "all"   -> all drivers
+        other   -> specific area
     """
     with DB_LOCK:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
-        cur.execute(
-            """
-            SELECT *
-            FROM users
-            WHERE is_driver = 1
-            AND area = ?
-            ORDER BY rating_avg DESC, rating_count DESC
-            """,
-            (user.area,),
-        )
+        area_value = (area_filter or "").strip()
+        if area_value.lower() == "all":
+            cur.execute(
+                """
+                SELECT *
+                FROM users
+                WHERE is_driver = 1
+                ORDER BY rating_avg DESC, rating_count DESC
+                """
+            )
+        else:
+            target_area = area_value or user.area
+            cur.execute(
+                """
+                SELECT *
+                FROM users
+                WHERE is_driver = 1
+                AND area = ?
+                ORDER BY rating_avg DESC, rating_count DESC
+                """,
+                (target_area,),
+            )
 
         rows = cur.fetchall()
         conn.close()

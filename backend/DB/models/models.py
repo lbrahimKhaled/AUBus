@@ -16,6 +16,10 @@ class User:
         rating_avg: float = 0.0,
         rating_count: int = 0,
         created_at: str = "",
+        latitude: float | None = None,
+        longitude: float | None = None,
+        city: str = "",
+        country: str = "",
         ip: str = "",
         port: int = 0,
     ):
@@ -30,6 +34,10 @@ class User:
         self.rating_avg = rating_avg
         self.rating_count = rating_count
         self.created_at = created_at
+        self.latitude = latitude
+        self.longitude = longitude
+        self.city = city
+        self.country = country
 
         # Network fields
         self.ip = ip
@@ -60,6 +68,10 @@ class User:
             "rating_avg": self.rating_avg,
             "rating_count": self.rating_count,
             "created_at": self.created_at,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "city": self.city,
+            "country": self.country,
             "ip": self.ip,
             "port": self.port,
             "online": self.online,

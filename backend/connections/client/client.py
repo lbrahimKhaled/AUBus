@@ -130,6 +130,33 @@ def send_schedule_to_server(client: socket.socket,
     return response == "1"
 
 
+def update_location_on_server(
+    client: socket.socket,
+    latitude: float | None,
+    longitude: float | None,
+    city: str | None,
+    country: str | None,
+    area: str | None,
+) -> bool:
+    """
+    Send latest geolocation to the server.
+    """
+    client.send("update_location".encode("utf-8"))
+    if client.recv(1024).decode("utf-8").strip() != "1":
+        return False
+
+    payload = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "city": city,
+        "country": country,
+        "area": area,
+    }
+    client.send(json.dumps(payload).encode("utf-8"))
+    ack = client.recv(1024).decode("utf-8").strip()
+    return ack == "1"
+
+
 def send_rating(client: socket.socket, target_username: str, stars: int, comment: str = "") -> bool:
     """
     Send a rating for target_username.
@@ -177,10 +204,20 @@ def sendCredentials(client: socket.socket, payload: dict) -> bool:
 
 
 # requesting driver/passenger
-def requestOther(client: socket.socket)->None:
-    msg = "request=1"
-    client.send(msg.encode('utf-8'))
-    if client.recv(1024).decode('utf-8') != "1":
+def requestOther(client: socket.socket, area_filter: str | None = None, target: str = "drivers") -> None:
+    """
+    area_filter:
+        None → use server default (user area)
+        "all" → request all drivers
+        "<AreaName>" → request drivers in that area
+    target:
+        "drivers"    → passenger requesting available drivers
+        "passengers" → driver requesting rider list
+    """
+    area_value = (area_filter or "").strip()
+    msg = f"request|{target}|{area_value}"
+    client.send(msg.encode("utf-8"))
+    if client.recv(1024).decode("utf-8") != "1":
         raise RuntimeError("Something went wrong when signing you in")
     
 
@@ -196,7 +233,7 @@ def receiveOther(client: socket.socket)->list[dict]:
         client.send("1".encode('utf-8'))
         return []
     client.send("1".encode('utf-8'))
-    return driversData
+    return driversData if isinstance(driversData, list) else []
 
 import json
 import socket
@@ -223,3 +260,20 @@ def sendChatOK(client: socket.socket, passenger_username: str):
     """
     msg = "chat_ok*" + passenger_username
     client.send(msg.encode("utf-8"))
+
+
+def send_emergency(client: socket.socket, payload: dict) -> bool:
+    """
+    Send an emergency packet to the server with all available context.
+    """
+    try:
+        client.send("emergency".encode("utf-8"))
+        ack = client.recv(1024).decode("utf-8").strip()
+        if ack != "1":
+            return False
+        client.send(json.dumps(payload).encode("utf-8"))
+        final_ack = client.recv(1024).decode("utf-8").strip()
+        return final_ack == "1"
+    except Exception as e:
+        print("Error sending emergency:", e)
+        return False
