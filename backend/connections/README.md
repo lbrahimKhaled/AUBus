@@ -1,7 +1,14 @@
 # Server and Client Codes
 
 ## Running / Testing some functions : 
-to be able to run things as a package and not get "no module named ..." run this command and not from the run button (it will run it as a module) 
+->to actually run the server locally do the following:
+
+```bash
+cd yourpathtoAUBus
+python -m backend.connections.server.run
+```
+
+->More generally to be able to run things as a package and not get "no module named ..." run this command and not from the run button (it will run it as a module) 
 DO NOT NAVIGATE TO THE SPECIFIC FILE AND RUN IT
 ```bash
 cd yourpathtoAUBus
@@ -29,14 +36,5 @@ And search for en0 you'll find it there
 ```bash
 ipconfig
 ```
-
-## Application Layer Protocol
-
-
--for drivers we will have a  
-
-## Configuration
-to install dependicies :
-```bash
-cd backend/connections
-pip install -r requirements.txt
+#### OR!!!
+when you run the server the IP will be printed on your terminal 

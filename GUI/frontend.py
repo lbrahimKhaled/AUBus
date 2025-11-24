@@ -1590,7 +1590,7 @@ class AUBusApp(QMainWindow):
             QMessageBox.warning(self, "Failed", "Could not send emergency alert. Check connection.")
 # ---------------------------- RUN APP ---------------------------- #
 if __name__ == "__main__":
-    ip: str = "192.168.1.142" #(input("enter IP: "))
+    ip: str = (input("enter IP: "))
     connection : socket.socket = connectToServer(ip)
     app = QApplication(sys.argv)
     window = AUBusApp(connection)
