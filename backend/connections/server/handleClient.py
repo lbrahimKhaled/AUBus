@@ -28,12 +28,37 @@ def handleClient(person : User):
                 # Expected format: request|drivers|<area> or request|passengers
                 target = "drivers"
                 area_filter = None
+                min_rating = None
+                depart_time = None
                 if "|" in message:
                     parts = message.split("|")
                     if len(parts) > 1 and parts[1]:
                         target = parts[1]
                     if len(parts) > 2:
                         area_filter = parts[2].strip() or None
+                    # parse optional filters such as min_rating=4 or depart_time=08:30
+                    for part in parts[3:]:
+                        if not part:
+                            continue
+                        key = None
+                        value = part
+                        if "=" in part:
+                            key, value = part.split("=", 1)
+                        key = (key or "").strip().lower()
+                        value = value.strip()
+                        if key in ("min_rating", "rating", "rating_threshold"):
+                            try:
+                                min_rating = float(value)
+                            except ValueError:
+                                pass
+                        elif key in ("depart_time", "time", "pickup_time"):
+                            depart_time = value
+                        elif min_rating is None:
+                            # allow raw numeric rating in legacy positional format
+                            try:
+                                min_rating = float(part)
+                            except ValueError:
+                                pass
                 elif "=" in message:
                     # backward compatibility: request=<area>
                     _, area_raw = message.split("=", 1)
@@ -42,7 +67,12 @@ def handleClient(person : User):
                 if target == "passengers" and person.is_driver:
                     driverRequest(person)
                 else:
-                    drivers : list[User] = propagateRequest(person, area_filter)
+                    drivers : list[User] = propagateRequest(
+                        person,
+                        area_filter=area_filter,
+                        min_rating=min_rating,
+                        depart_time=depart_time,
+                    )
                     sendDriversToPassenger(person, drivers)
 
             elif message == "change": # weather requests (TO DO LATER)
@@ -170,15 +200,16 @@ def sendPassengerstoDriver(driver: User, passList: list[User]):
     passengersData = [p.to_dict() for p in passList]
     passengerJSON = json.dumps(passengersData)
     driver.conn.sendall(passengerJSON.encode('utf-8'))
-    # Avoid hanging forever waiting for ACK from client
+    # Best-effort ACK (non-blocking-ish) to avoid timeouts if client doesn't reply
     prev_timeout = driver.conn.gettimeout()
-    driver.conn.settimeout(2.0)
+    driver.conn.settimeout(0.5)
     try:
         ack = driver.conn.recv(1024)
         if ack.decode('utf-8') != "1":
             print("Warning: unexpected ACK from driver when sending passengers")
-    except socket.timeout:
-        print("Warning: timed out waiting for driver ACK (passenger list)")
+    except Exception:
+        # Do not block or fail if driver doesn't ACK
+        pass
     finally:
         driver.conn.settimeout(prev_timeout)
     # Clear requests once delivered so past ones don't linger
@@ -191,16 +222,18 @@ def sendPassengerstoDriver(driver: User, passList: list[User]):
 def sendDriversToPassenger(passenger: User, drivers: list[User]):
     # Serialize only safe fields (no sockets)
     driversData = [d.to_dict() for d in drivers]
+    print("Sending drivers data:", driversData)
     driverJSON = json.dumps(driversData)
     passenger.conn.sendall(driverJSON.encode('utf-8'))
     prev_timeout = passenger.conn.gettimeout()
-    passenger.conn.settimeout(2.0)
+    passenger.conn.settimeout(0.5)
     try:
         ack = passenger.conn.recv(1024)
         if ack.decode('utf-8') != "1":
             print("Warning: unexpected ACK from passenger when sending drivers")
-    except socket.timeout:
-        print("Warning: timed out waiting for passenger ACK (drivers list)")
+    except Exception:
+        # Avoid blocking caller if passenger does not ACK
+        pass
     finally:
         passenger.conn.settimeout(prev_timeout)
 
@@ -210,14 +243,24 @@ def driverRequest(person: User):
     sendPassengerstoDriver(person, passengers)
 
 
-def propagateRequest(person: User, area_filter: str | None = None)->list[User]:
+def propagateRequest(
+    person: User,
+    area_filter: str | None = None,
+    min_rating: float | None = None,
+    depart_time: str | None = None,
+)->list[User]:
     # Drop old requests for this rider so we only keep the fresh ones
     try:
         delete_driver_requests_for_user(person.id)
     except Exception as e:
         print("Error cleaning old requests for rider:", e)
 
-    availableDrivers : list[User] = find_candidate_drivers(person, area_filter)
+    availableDrivers : list[User] = find_candidate_drivers(
+        person,
+        area_filter,
+        min_rating=min_rating,
+        depart_time=depart_time,
+    )
     actualDrivers: list[User] = []
     print(online_users)
     for driver in availableDrivers:

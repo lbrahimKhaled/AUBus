@@ -634,7 +634,21 @@ def normalize_time(time_str: str) -> str:
     return dt.strftime("%H:%M")
 
 
-def find_candidate_drivers(user: User, area_filter: str | None = None) -> list[User]:
+def _time_to_minutes(time_str: str) -> int | None:
+    """Convert HH:MM to absolute minutes from midnight."""
+    try:
+        hours, minutes = map(int, time_str.split(":"))
+        return hours * 60 + minutes
+    except Exception:
+        return None
+
+
+def find_candidate_drivers(
+    user: User,
+    area_filter: str | None = None,
+    min_rating: float | None = None,
+    depart_time: str | None = None,
+) -> list[User]:
     """
     Return a list of User objects representing all drivers
     filtered by area.
@@ -642,6 +656,12 @@ def find_candidate_drivers(user: User, area_filter: str | None = None) -> list[U
         None/"" -> use user's area
         "all"   -> all drivers
         other   -> specific area
+    min_rating:
+        None -> no filter
+        N    -> only drivers with rating_avg >= N
+    depart_time:
+        None -> ignore schedule filtering
+        "HH:MM" -> prefer drivers with schedule near that time
     """
     with DB_LOCK:
         conn = sqlite3.connect(DB_PATH)
@@ -649,30 +669,25 @@ def find_candidate_drivers(user: User, area_filter: str | None = None) -> list[U
         cur = conn.cursor()
 
         area_value = (area_filter or "").strip()
-        if area_value.lower() == "all":
-            cur.execute(
-                """
-                SELECT *
-                FROM users
-                WHERE is_driver = 1
-                ORDER BY rating_avg DESC, rating_count DESC
-                """
-            )
-        else:
-            target_area = area_value or user.area
-            cur.execute(
-                """
-                SELECT *
-                FROM users
-                WHERE is_driver = 1
-                AND area = ?
-                ORDER BY rating_avg DESC, rating_count DESC
-                """,
-                (target_area,),
-            )
+        target_area = None if area_value.lower() == "all" else (area_value or user.area)
+
+        query = """
+            SELECT *
+            FROM users
+            WHERE is_driver = 1
+        """
+        params: list = []
+        if target_area is not None:
+            query += " AND area = ?"
+            params.append(target_area)
+        if min_rating is not None:
+            query += " AND rating_avg >= ?"
+            params.append(min_rating)
+        query += " ORDER BY rating_avg DESC, rating_count DESC"
+
+        cur.execute(query, params)
 
         rows = cur.fetchall()
-        conn.close()
 
         # Convert rows → User objects
         result = []
@@ -691,6 +706,47 @@ def find_candidate_drivers(user: User, area_filter: str | None = None) -> list[U
                     created_at=row["created_at"],
                 )
             )
+
+        # Optional time-based filtering using driver schedules
+        if depart_time:
+            try:
+                normalized = normalize_time(depart_time)
+            except Exception:
+                normalized = None
+            target_minutes = _time_to_minutes(normalized) if normalized else None
+            if target_minutes is not None and result:
+                weekday = datetime.utcnow().weekday()
+                driver_ids = [u.id for u in result]
+                placeholders = ",".join("?" for _ in driver_ids)
+                cur.execute(
+                    f"""
+                    SELECT user_id, depart_time
+                    FROM schedules
+                    WHERE user_id IN ({placeholders})
+                    AND weekday = ?
+                    """,
+                    driver_ids + [weekday],
+                )
+                schedule_map: dict[int, list[int]] = {}
+                for sched in cur.fetchall():
+                    minutes = _time_to_minutes(sched["depart_time"])
+                    if minutes is None:
+                        continue
+                    schedule_map.setdefault(sched["user_id"], []).append(minutes)
+
+                filtered: list[User] = []
+                window_minutes = 60  # consider drivers within ±1 hour of requested time
+                for driver in result:
+                    times = schedule_map.get(driver.id)
+                    if not times:
+                        # keep unscheduled drivers so results are not empty
+                        filtered.append(driver)
+                        continue
+                    if any(abs(t - target_minutes) <= window_minutes for t in times):
+                        filtered.append(driver)
+                result = filtered
+
+        conn.close()
 
         return result
 

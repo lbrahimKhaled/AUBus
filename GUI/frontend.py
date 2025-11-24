@@ -13,9 +13,9 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox,
     QVBoxLayout, QHBoxLayout, QGridLayout, QStackedWidget, QTableWidget, QTableWidgetItem,
     QHeaderView, QMainWindow, QFrame, QRadioButton, QMessageBox, QSpinBox, QSplitter,
-    QScrollArea
+    QScrollArea, QTimeEdit
 )
-from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QRectF, QPointF
+from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QRectF, QPointF, QTime
 from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap
 try:
     from PyQt5.QtMultimedia import (
@@ -44,9 +44,23 @@ class AUBusController:
 
     def set_p2p_socket(self, sock: socket.socket):
         """Store the active P2P socket and notify any listener."""
+        try:
+            if self.p2pcon and self.p2pcon is not sock:
+                self.p2pcon.close()
+        except Exception:
+            pass
         self.p2pcon = sock
         if callable(self.on_p2p_ready):
             self.on_p2p_ready()
+
+    def close_p2p(self):
+        """Close and clear current P2P socket if any."""
+        try:
+            if self.p2pcon:
+                self.p2pcon.close()
+        except Exception:
+            pass
+        self.p2pcon = None
 
     def login(self, username, password, name, email, area, is_driver, login: int) -> bool:
         """
@@ -92,9 +106,21 @@ class AUBusController:
         except Exception as e:
             print("Failed to stop driver listener:", e)
 
-    def getOther(self, area_filter: str | None = None, target: str = "drivers"):
+    def getOther(
+        self,
+        area_filter: str | None = None,
+        target: str = "drivers",
+        min_rating: float | None = None,
+        depart_time: str | None = None,
+    ):
         try:
-            requestOther(self.conn, area_filter, target)
+            requestOther(
+                self.conn,
+                area_filter=area_filter,
+                target=target,
+                min_rating=min_rating,
+                depart_time=depart_time,
+            )
             drivers: list[dict] = receiveOther(self.conn)
             return drivers if isinstance(drivers, list) else []
         except Exception as e:
@@ -102,16 +128,22 @@ class AUBusController:
             return []
     
     def get_weather(self, location: str)->str:
-        # try:
-        #     api_key = "34b53f4628054c4bbf2154149251611"
-        #     url = f"http://api.weatherapi.com/v1/current.json?key={api_key}&q={location}&aqi=no"
-        #     response = requests.get(url)
-        #     data = response.json()
-        #     temp = data["current"]["temp_c"]
-        #     description = data["current"]["condition"]["text"].capitalize()
-        #     return f"🌤️ {temp:.1f}°C, {description} in {location}"
-        # except Exception:
-            return "🌤️ Weather unavailable"
+        """
+        Fetch weather with a short timeout so the UI never freezes.
+        Falls back quietly if network is blocked/unavailable.
+        """
+        target_loc = location or "Beirut"
+        try:
+            api_key = "34b53f4628054c4bbf2154149251611"
+            url = f"https://api.weatherapi.com/v1/current.json?key={api_key}&q={target_loc}&aqi=no"
+            response = requests.get(url, timeout=1.5)
+            response.raise_for_status()
+            data = response.json()
+            temp = float(data["current"]["temp_c"])
+            description = data["current"]["condition"]["text"].capitalize()
+            return f"🌤️ {temp:.1f}°C, {description} in {target_loc}"
+        except Exception:
+            return f"🌤️ Weather unavailable in {target_loc}"
 
     def rate_partner(self, target_username: str, stars: int, comment: str = "") -> bool:
         try:
@@ -581,9 +613,17 @@ class DashboardPage(QWidget):
         self.area_box = QComboBox()
         self.area_box.addItems(["Select Area", "Hamra", "Achrafieh", "Verdun", "Jnah", "Other"])
 
-        self.time_spin = QSpinBox()
-        self.time_spin.setRange(0, 23)
-        self.time_spin.setPrefix("Pickup Hour (0-23): ")
+        self.depart_time_edit = QTimeEdit()
+        self.depart_time_edit.setDisplayFormat("HH:mm")
+        self.depart_time_edit.setTime(QTime.currentTime())
+        self.depart_time_edit.setToolTip("Preferred departure time from your location")
+
+        self.rating_filter = QSpinBox()
+        self.rating_filter.setRange(0, 5)
+        self.rating_filter.setPrefix("Min Rating: ")
+        self.rating_filter.setSuffix(" ★")
+        self.rating_filter.setValue(0)
+        self.rating_filter.setToolTip("Only show drivers with this rating or above (0 to disable)")
 
         req_btn = QPushButton("Send Ride Request")
         req_btn.clicked.connect(self.show_drivers)
@@ -609,7 +649,8 @@ class DashboardPage(QWidget):
         layout.addWidget(subtitle)
         layout.addSpacing(15)
         layout.addWidget(self.area_box)
-        layout.addWidget(self.time_spin)
+        layout.addWidget(self.depart_time_edit)
+        layout.addWidget(self.rating_filter)
         layout.addWidget(req_btn)
         layout.addWidget(self.location_btn)
         layout.addWidget(self.location_label)
@@ -630,10 +671,17 @@ class DashboardPage(QWidget):
             else:
                 area_filter = selection
 
-            drivers : list[dict] = self.controller.getOther(area_filter) or []
+            min_rating = self.rating_filter.value()
+            min_rating = min_rating if min_rating > 0 else None
+            depart_time = self.depart_time_edit.time().toString("HH:mm")
+
+            drivers : list[dict] = self.controller.getOther(
+                area_filter,
+                min_rating=min_rating,
+                depart_time=depart_time,
+            ) or []
             if not isinstance(drivers, list):
                 drivers = []
-            print(drivers)
             markers: list[tuple[float, float, str]] = []
             self.table.setRowCount(0)
             for driver in drivers:
@@ -648,7 +696,7 @@ class DashboardPage(QWidget):
                 email = str(driver.get("email", "N/A"))
                 area = str(driver.get("area", driver.get("location", "N/A")))
                 ip = str(driver.get("ip", ""))
-                rating = str(driver.get("rating_avg", driver.get("rating", "N/A")))
+                rating = self._format_rating(driver.get("rating_avg", driver.get("rating", "N/A")))
                 for j, val in enumerate([name, username, email, area, ip, rating]):
                     self.table.setItem(row_idx, j, QTableWidgetItem(val))
                 lat = driver.get("latitude")
@@ -693,7 +741,7 @@ class DashboardPage(QWidget):
             if area:
                 self.parent.user_data["area"] = area
 
-            pretty_coords = f"({float(lat):.3f}, {float(lon):.3f})" if lat is not None and lon is not None else ""
+            pretty_coords = f"({float(lat):.2f}, {float(lon):.2f})" if lat is not None and lon is not None else ""
             self.location_label.setText(f"Location: {city}, {country} {pretty_coords}".strip())
             self.map_widget.set_user_location(lat, lon, city)
             # refresh driver markers on the map with the latest view
@@ -728,6 +776,14 @@ class DashboardPage(QWidget):
                 return coords
         return None
 
+    def _format_rating(self, value) -> str:
+        """Return rating with max 2 decimals."""
+        try:
+            num = float(value)
+            return f"{num:.2f}"
+        except Exception:
+            return str(value if value is not None else "N/A")
+
 
     def open_chat(self, row, _):
         selected_driver = self.table.item(row, 0)
@@ -749,6 +805,8 @@ class DashboardPage(QWidget):
         QMessageBox.information(self, "Waiting", "Waiting for driver to accept chat...")
 
         # Wait for server response (driver OK)
+        # ensure stale P2P is closed before establishing new one
+        self.controller.close_p2p()
         P2Pcon = waitForChatApproval(self.controller.conn)
         if not P2Pcon:
             QMessageBox.warning(self, "Chat Failed", "No response from driver or server.")
@@ -773,6 +831,7 @@ class ChatPage(QWidget):
         self.current_record_path = ""
         self.last_recorded_path = ""
         self.is_recording = False
+        self.active_p2p_socket = None
         self.incoming_payload.connect(self.handle_incoming_payload)
         # Left panel: Chat
         self.header = QLabel("No active chat")
@@ -872,7 +931,7 @@ class ChatPage(QWidget):
             email = str(driver.get("email", "N/A"))
             area = str(driver.get("area", driver.get("location", "N/A")))
             ip = str(driver.get("ip", ""))
-            rating = str(driver.get("rating_avg", driver.get("rating", "N/A")))
+            rating = self._fmt_rating(driver.get("rating_avg", driver.get("rating", "N/A")))
 
             for j, val in enumerate([name, username, email, area, ip, rating]):
                 self.passenger_table.setItem(i, j, QTableWidgetItem(val))
@@ -922,6 +981,8 @@ class ChatPage(QWidget):
         if passenger.get("name") == self.parent.user_data.get("username"):
             QMessageBox.warning(self, "Invalid", "You cannot chat with yourself.")
             return
+        # Close any previous P2P before starting a new chat
+        self.controller.close_p2p()
 
         # Mark chat state
         self.parent.chat_partner = passenger
@@ -929,10 +990,11 @@ class ChatPage(QWidget):
 
         # Update chat header and clear previous chat
         self.chat_box.clear()
+        rating_val = self._fmt_rating(passenger.get("rating") or passenger.get("rating_avg") or "N/A")
         self.header.setText(
             f"Chatting with: <b>{passenger.get('name')}</b> | "
             f"Area: {passenger.get('location', passenger.get('area','N/A'))} | "
-            f"Rating: {passenger.get('rating','N/A')}"
+            f"Rating: {rating_val}"
         )
 
         sendChatOK(self.controller.conn, passenger["username"])
@@ -949,8 +1011,11 @@ class ChatPage(QWidget):
         if not partner:
             self.header.setText("No active chat")
         else:
+            area = partner.get("area", partner.get("location", "N/A"))
+            rating = self._fmt_rating(partner.get("rating") or partner.get("rating_avg") or "N/A")
+            name = partner.get("name", "Unknown")
             self.header.setText(
-                f"Chatting with: <b>{partner['name']}</b> | Area: {partner['area']} | Rating: {partner['rating']}"
+                f"Chatting with: <b>{name}</b> | Area: {area} | Rating: {rating}"
             )
 
         # Hide right side for passengers
@@ -1054,9 +1119,13 @@ class ChatPage(QWidget):
         """
         if not self.controller.p2pcon:
             return
-        if self.receiver_started:
+        # allow restart if socket changed
+        if self.receiver_started and self.active_p2p_socket is self.controller.p2pcon:
             return
+        if self.receiver_started and self.active_p2p_socket is not self.controller.p2pcon:
+            self.receiver_started = False
         self.receiver_started = True
+        self.active_p2p_socket = self.controller.p2pcon
 
         def listen_for_messages():
             while True:
@@ -1082,6 +1151,10 @@ class ChatPage(QWidget):
                 except Exception as e:
                     print("Receiver stopped:", e)
                     break
+
+            self.controller.close_p2p()
+            self.receiver_started = False
+            self.active_p2p_socket = None
 
         threading.Thread(target=listen_for_messages, daemon=True).start()
 
@@ -1112,6 +1185,13 @@ class ChatPage(QWidget):
         else:
             # fallback if peer sends plain message structure
             self.chat_box.append(f"Peer: {payload}")
+
+    def _fmt_rating(self, value) -> str:
+        try:
+            num = float(value)
+            return f"{num:.2f}"
+        except Exception:
+            return str(value if value is not None else "N/A")
 
     def add_voice_note_ui(self, sender: str, filepath: str):
         row_widget = QWidget()
@@ -1325,6 +1405,8 @@ class AUBusApp(QMainWindow):
         self.chat_partner = None
         self.chat_started = False
         self.controller = AUBusController(conn)
+        # track last active p2p socket for restart handling
+        self.active_p2p_socket = None
 
         container = QWidget()
         layout = QHBoxLayout(container)
@@ -1416,7 +1498,7 @@ class AUBusApp(QMainWindow):
         self.setStyleSheet("""
             QWidget {
                 background-color: #f4f6fb;
-                font-family: 'Segoe UI';
+                font-family: 'Arial', 'Helvetica', sans-serif;
                 color: #1f2933;
             }
             QFrame#sidebar {
@@ -1508,7 +1590,7 @@ class AUBusApp(QMainWindow):
             QMessageBox.warning(self, "Failed", "Could not send emergency alert. Check connection.")
 # ---------------------------- RUN APP ---------------------------- #
 if __name__ == "__main__":
-    ip: str = "127.0.0.1" #(input("enter IP: "))
+    ip: str = "192.168.1.142" #(input("enter IP: "))
     connection : socket.socket = connectToServer(ip)
     app = QApplication(sys.argv)
     window = AUBusApp(connection)

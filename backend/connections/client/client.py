@@ -142,8 +142,12 @@ def update_location_on_server(
     Send latest geolocation to the server.
     """
     client.send("update_location".encode("utf-8"))
-    if client.recv(1024).decode("utf-8").strip() != "1":
-        return False
+    try:
+        ack = client.recv(1).decode("utf-8", errors="ignore")
+        if ack != "1":
+            print("Warning: unexpected ACK when starting location update")
+    except Exception as e:
+        print("Warning: failed to read ACK when starting location update:", e)
 
     payload = {
         "latitude": latitude,
@@ -153,8 +157,12 @@ def update_location_on_server(
         "area": area,
     }
     client.send(json.dumps(payload).encode("utf-8"))
-    ack = client.recv(1024).decode("utf-8").strip()
-    return ack == "1"
+    try:
+        ack = client.recv(1).decode("utf-8", errors="ignore")
+        return ack == "1"
+    except Exception as e:
+        print("Warning: failed to read final ACK after location update:", e)
+        return False
 
 
 def send_rating(client: socket.socket, target_username: str, stars: int, comment: str = "") -> bool:
@@ -162,8 +170,12 @@ def send_rating(client: socket.socket, target_username: str, stars: int, comment
     Send a rating for target_username.
     """
     client.send("rate".encode("utf-8"))
-    if client.recv(1024).decode("utf-8").strip() != "1":
-        return False
+    try:
+        ack = client.recv(1).decode("utf-8", errors="ignore")
+        if ack != "1":
+            print("Warning: unexpected ACK when starting rating")
+    except Exception as e:
+        print("Warning: failed to read ACK when starting rating:", e)
 
     payload = {
         "target_username": target_username,
@@ -171,8 +183,12 @@ def send_rating(client: socket.socket, target_username: str, stars: int, comment
         "comment": comment or "",
     }
     client.send(json.dumps(payload).encode("utf-8"))
-    ack = client.recv(1024).decode("utf-8").strip()
-    return ack == "1"
+    try:
+        ack = client.recv(1).decode("utf-8", errors="ignore")
+        return ack == "1"
+    except Exception as e:
+        print("Warning: failed to read rating ACK:", e)
+        return False
 
 
 # Single global for listener socket
@@ -204,7 +220,13 @@ def sendCredentials(client: socket.socket, payload: dict) -> bool:
 
 
 # requesting driver/passenger
-def requestOther(client: socket.socket, area_filter: str | None = None, target: str = "drivers") -> None:
+def requestOther(
+    client: socket.socket,
+    area_filter: str | None = None,
+    target: str = "drivers",
+    min_rating: float | None = None,
+    depart_time: str | None = None,
+) -> None:
     """
     area_filter:
         None → use server default (user area)
@@ -213,26 +235,38 @@ def requestOther(client: socket.socket, area_filter: str | None = None, target: 
     target:
         "drivers"    → passenger requesting available drivers
         "passengers" → driver requesting rider list
+    min_rating:
+        None → no rating filter
+        N    → only drivers with rating >= N
+    depart_time:
+        None → ignore time preference
+        "HH:MM" → request drivers near that time
     """
     area_value = (area_filter or "").strip()
-    msg = f"request|{target}|{area_value}"
+    parts = ["request", target, area_value]
+    if min_rating is not None:
+        parts.append(f"min_rating={min_rating}")
+    if depart_time:
+        parts.append(f"depart_time={depart_time}")
+    msg = "|".join(parts)
     client.send(msg.encode("utf-8"))
-    if client.recv(1024).decode("utf-8") != "1":
-        raise RuntimeError("Something went wrong when signing you in")
+    try:
+        ack = client.recv(1)  # read only the ack byte to avoid mixing with payload
+        if ack.decode("utf-8", errors="ignore") != "1":
+            print("Warning: unexpected ACK when requesting others")
+    except Exception as e:
+        print("Warning: failed to read ACK when requesting others:", e)
     
 
 
 def receiveOther(client: socket.socket)->list[dict]:
     data_bytes = client.recv(4096)
     if not data_bytes:
-        client.send("1".encode('utf-8'))
         return []
     try:
         driversData = json.loads(data_bytes.decode('utf-8'))
     except json.JSONDecodeError:
-        client.send("1".encode('utf-8'))
         return []
-    client.send("1".encode('utf-8'))
     return driversData if isinstance(driversData, list) else []
 
 import json
