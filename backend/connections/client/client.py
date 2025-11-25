@@ -7,10 +7,14 @@ from backend.DB.models.models import User
 from typing import Callable, Optional
 
 # peer to peer code
-def connectToDriver(ip: str)->socket.socket:
-    currentSocket : socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+
+def connectToDriver(ip: str) -> socket.socket:
+    currentSocket: socket.socket = socket.socket(
+        socket.AF_INET, socket.SOCK_STREAM)
     currentSocket.connect((ip, 9980))
     return currentSocket
+
 
 def start_driver_listener(on_connect: Optional[Callable[[socket.socket], None]] = None):
     """
@@ -27,7 +31,8 @@ def start_driver_listener(on_connect: Optional[Callable[[socket.socket], None]] 
     DRIVER_LISTEN_SOCKET = listen_socket
 
     # Run in a thread so we can accept multiple connections
-    threading.Thread(target=listen_loop, args=(listen_socket, on_connect), daemon=True).start()
+    threading.Thread(target=listen_loop, args=(
+        listen_socket, on_connect), daemon=True).start()
     return listen_socket
 
 
@@ -53,7 +58,7 @@ def listen_loop(listen_socket: socket.socket, on_connect: Optional[Callable[[soc
         except OSError:
             # socket was likely closed
             break
-        clientP : User = User()
+        clientP: User = User()
         clientP.set_connection(connection)
         clientP.ip = client_address[0]
         clientP.port = client_address[1]
@@ -62,12 +67,15 @@ def listen_loop(listen_socket: socket.socket, on_connect: Optional[Callable[[soc
             on_connect(connection)
         else:
             # Fallback: just log incoming data
-            threading.Thread(target=handle_peer, args=(connection,), daemon=True).start()
+            threading.Thread(target=handle_peer, args=(
+                connection,), daemon=True).start()
 
-def sendMsg(connection: socket.socket, msg: str)->None:
+
+def sendMsg(connection: socket.socket, msg: str) -> None:
     connection.send(msg.encode('utf-8'))
     if connection.recv(1024).decode('utf-8') != "1":
-        raise RuntimeError("Something went wrong when sending the message to the passenger")
+        raise RuntimeError(
+            "Something went wrong when sending the message to the passenger")
 
 
 def handle_peer(peer_conn):
@@ -80,28 +88,33 @@ def handle_peer(peer_conn):
 
     peer_conn.close()
 
-## driver related code
+# driver related code
 
-def sendMessageToDriver(driverSocket: socket.socket, msg: str)->None:
+
+def sendMessageToDriver(driverSocket: socket.socket, msg: str) -> None:
     driverSocket.send(msg.encode('utf-8'))
     if driverSocket.recv(1024).decode('utf-8') != "1":
-        raise RuntimeError("Something went wrong when sending the message to the driver")
+        raise RuntimeError(
+            "Something went wrong when sending the message to the driver")
 
-def driverReceiveMessage(driverSocket: socket.socket)->str:
+
+def driverReceiveMessage(driverSocket: socket.socket) -> str:
     data = driverSocket.recv(1024).decode('utf-8')
     driverSocket.send("1".encode('utf-8'))
     return data
 
 
 # server related code
-def connectToServer(ipServer: str)->socket.socket:
-    client : socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+def connectToServer(ipServer: str) -> socket.socket:
+    client: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     client.connect((ipServer, 9999))
     return client
 
-def changeMsg(client: socket.socket)->None:
+
+def changeMsg(client: socket.socket) -> None:
     client.send("change".encode('utf-8'))
     msg = client.recv(1024).decode('utf-8') != "1"
+
 
 def send_schedule_to_server(client: socket.socket,
                             weekday: int,
@@ -113,7 +126,8 @@ def send_schedule_to_server(client: socket.socket,
     """
     client.send("schedule".encode("utf-8"))
     if client.recv(1024).decode("utf-8").strip() != "1":
-        raise RuntimeError("Something went wrong when signaling schedule addition to the server")
+        raise RuntimeError(
+            "Something went wrong when signaling schedule addition to the server")
 
     payload = {
         "action": "add_schedule",
@@ -194,6 +208,7 @@ def send_rating(client: socket.socket, target_username: str, stars: int, comment
 # Single global for listener socket
 DRIVER_LISTEN_SOCKET: socket.socket | None = None
 
+
 def sendCredentials(client: socket.socket, payload: dict) -> bool:
     """
     Sends the given JSON payload to the server.
@@ -221,12 +236,14 @@ def sendCredentials(client: socket.socket, payload: dict) -> bool:
 
 # requesting driver/passenger
 def requestOther(
-    client: socket.socket,
-    area_filter: str | None = None,
-    target: str = "drivers",
-    min_rating: float | None = None,
-    depart_time: str | None = None,
-) -> None:
+    client,
+    area_filter=None,
+    target="drivers",
+    min_rating=None,
+    depart_time=None,
+    direction=None,
+    weekday=None
+):
     """
     area_filter:
         None → use server default (user area)
@@ -248,18 +265,23 @@ def requestOther(
         parts.append(f"min_rating={min_rating}")
     if depart_time:
         parts.append(f"depart_time={depart_time}")
+    if direction:
+        parts.append(f"direction={direction}")
+    if weekday is not None:
+        parts.append(f"weekday={weekday}")
     msg = "|".join(parts)
     client.send(msg.encode("utf-8"))
+
     try:
-        ack = client.recv(1)  # read only the ack byte to avoid mixing with payload
+        # read only the ack byte to avoid mixing with payload
+        ack = client.recv(1)
         if ack.decode("utf-8", errors="ignore") != "1":
             print("Warning: unexpected ACK when requesting others")
     except Exception as e:
         print("Warning: failed to read ACK when requesting others:", e)
-    
 
 
-def receiveOther(client: socket.socket)->list[dict]:
+def receiveOther(client: socket.socket) -> list[dict]:
     data_bytes = client.recv(4096)
     if not data_bytes:
         return []
@@ -269,10 +291,8 @@ def receiveOther(client: socket.socket)->list[dict]:
         return []
     return driversData if isinstance(driversData, list) else []
 
-import json
-import socket
 
-def waitForChatApproval(client: socket.socket)->socket.socket | None:
+def waitForChatApproval(client: socket.socket) -> socket.socket | None:
     """
     Passenger waits for driver approval (IP + port) from server.
     And returns a connection to the driver
@@ -287,6 +307,7 @@ def waitForChatApproval(client: socket.socket)->socket.socket | None:
     except Exception as e:
         print("Error waiting for chat approval:", e)
         return None
+
 
 def sendChatOK(client: socket.socket, passenger_username: str):
     """
