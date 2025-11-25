@@ -4,7 +4,7 @@ import threading
 import json
 import time
 
-#DB dependencies
+# DB dependencies
 from backend.DB.db import add_driver_request, find_candidate_drivers, getRequests, delete_driver_requests_for_user, add_rating, get_user_by_username
 from backend.DB.db import authenticate_user, create_user, add_schedule, update_is_driver_by_username, add_emergency_report, update_user_location
 from backend.DB.models.models import User
@@ -12,24 +12,29 @@ from backend.connections.client.client import start_driver_listener
 
 online_users: dict[str, User] = {}
 
-def handleClient(person : User):
+
+def handleClient(person: User):
     try:
-        #logging in / registering
+        # logging in / registering
         person = handleClientCredentials(person)
         online_users[person.username] = person
         print(online_users)
-        #while true for multiple requests i.e. we will be always listening for upcoming requests
+        # while true for multiple requests i.e. we will be always listening for upcoming requests
         while True:
             print("waiting for request...")
             message = person.conn.recv(1024).decode('utf-8')
             print("received msg: ", message)
-            person.conn.send("1".encode('utf-8')) #acknowledging the reception of the message
+            # acknowledging the reception of the message
+            person.conn.send("1".encode('utf-8'))
             if message.startswith("request"):
                 # Expected format: request|drivers|<area> or request|passengers
                 target = "drivers"
                 area_filter = None
                 min_rating = None
                 depart_time = None
+                direction = None
+                weekday = None
+
                 if "|" in message:
                     parts = message.split("|")
                     if len(parts) > 1 and parts[1]:
@@ -53,6 +58,13 @@ def handleClient(person : User):
                                 pass
                         elif key in ("depart_time", "time", "pickup_time"):
                             depart_time = value
+                        elif key in ("direction", "dir"):
+                            direction = value
+                        elif key == "weekday":
+                            try:
+                                weekday = int(value)
+                            except:
+                                weekday = None
                         elif min_rating is None:
                             # allow raw numeric rating in legacy positional format
                             try:
@@ -67,24 +79,28 @@ def handleClient(person : User):
                 if target == "passengers" and person.is_driver:
                     driverRequest(person)
                 else:
-                    drivers : list[User] = propagateRequest(
+                    drivers: list[User] = propagateRequest(
                         person,
                         area_filter=area_filter,
                         min_rating=min_rating,
                         depart_time=depart_time,
+                        direction=direction,
+                        weekday=weekday,
                     )
+
                     sendDriversToPassenger(person, drivers)
 
-            elif message == "change": # weather requests (TO DO LATER)
+            elif message == "change":  # weather requests (TO DO LATER)
                 person.is_driver = not person.is_driver
                 online_users[person.username] = person
                 try:
-                    update_is_driver_by_username(person.username, person.is_driver)
+                    update_is_driver_by_username(
+                        person.username, person.is_driver)
                 except Exception as e:
                     print("Error updating is_driver in DB:", e)
                 print("is he? ", person.is_driver)
 
-            elif message == "schedule": # schedule addition
+            elif message == "schedule":  # schedule addition
                 data = person.conn.recv(4096)
                 payload = json.loads(data.decode("utf-8"))
                 weekday = payload.get("weekday")
@@ -98,9 +114,23 @@ def handleClient(person : User):
                     print("Error adding schedule:", e)
                     person.conn.send("0".encode("utf-8"))
 
+            # Passenger initiates chat
+            elif message.startswith("chat_request|"):
+                try:
+                    driver_username = message.split("|")[1]
+                    if driver_username in online_users:
+                        driver_user = online_users[driver_username]
+                        notify = f"chat_req_from|{person.username}"
+                        driver_user.conn.send(notify.encode("utf-8"))
+                    else:
+                        person.conn.send("0".encode("utf-8"))
+                except Exception as e:
+                    print("Error in chat_request:", e)
+                    person.conn.send("0".encode("utf-8"))
+
+            # Driver approves chat
             elif message.startswith("chat_ok"):
                 target = message.split("*")[1]
-                # Find passenger, send back approval + driver IP/port
                 if target in online_users:
                     online_users[target].conn.send(person.ip.encode("utf-8"))
 
@@ -131,10 +161,12 @@ def handleClient(person : User):
                     payload = json.loads(data.decode("utf-8"))
                     partner_info = payload.get("chat_partner") or {}
                     partner_username = partner_info.get("username", "")
-                    partner_user = get_user_by_username(partner_username) if partner_username else None
+                    partner_user = get_user_by_username(
+                        partner_username) if partner_username else None
                     partner_id = partner_user.id if partner_user else None
                     partner_role = (
-                        "driver" if partner_user and partner_user.is_driver else partner_info.get("role", "")
+                        "driver" if partner_user and partner_user.is_driver else partner_info.get(
+                            "role", "")
                     )
                     add_emergency_report(
                         reporter_id=person.id,
@@ -193,8 +225,6 @@ def handleClient(person : User):
             pass
 
 
-
-
 def sendPassengerstoDriver(driver: User, passList: list[User]):
     # Serialize only safe fields (no sockets)
     passengersData = [p.to_dict() for p in passList]
@@ -239,28 +269,34 @@ def sendDriversToPassenger(passenger: User, drivers: list[User]):
 
 
 def driverRequest(person: User):
-    passengers : list[User] = getRequests(person.id)
+    passengers: list[User] = getRequests(person.id)
     sendPassengerstoDriver(person, passengers)
 
 
 def propagateRequest(
-    person: User,
-    area_filter: str | None = None,
-    min_rating: float | None = None,
-    depart_time: str | None = None,
-)->list[User]:
+    person,
+    area_filter=None,
+    min_rating=None,
+    depart_time=None,
+    direction=None,
+    weekday=None
+):
+
     # Drop old requests for this rider so we only keep the fresh ones
     try:
         delete_driver_requests_for_user(person.id)
     except Exception as e:
         print("Error cleaning old requests for rider:", e)
 
-    availableDrivers : list[User] = find_candidate_drivers(
+    availableDrivers = find_candidate_drivers(
         person,
         area_filter,
         min_rating=min_rating,
         depart_time=depart_time,
+        direction=direction,
+        weekday=weekday,
     )
+
     actualDrivers: list[User] = []
     print(online_users)
     for driver in availableDrivers:
@@ -272,8 +308,7 @@ def propagateRequest(
     return actualDrivers
 
 
-
-def handleClientCredentials(person: User)-> User:
+def handleClientCredentials(person: User) -> User:
   # Receive raw bytes from client
     data = person.conn.recv(4096)
     print("Received data for credentials:", data)
@@ -283,8 +318,8 @@ def handleClientCredentials(person: User)-> User:
         # Bad JSON → fail hard
         person.conn.sendall("0".encode("utf-8"))
         return person
-    
-    user : User = person
+
+    user: User = person
     login = payload.get("login")  # expect 1 for login, 0 for signup
 
     if login == 1:
@@ -304,11 +339,11 @@ def handleClientCredentials(person: User)-> User:
 
     else:
         # SIGNUP / REGISTER FLOW
-        username  = payload.get("username")
-        pswrd     = payload.get("password")
-        name      = payload.get("name")
-        email     = payload.get("email")
-        area      = payload.get("area")
+        username = payload.get("username")
+        pswrd = payload.get("password")
+        name = payload.get("name")
+        email = payload.get("email")
+        area = payload.get("area")
         is_driver = bool(payload.get("is_driver"))  # expect true/false in JSON
         print("registering user:", username, email, name, area, is_driver)
         try:
@@ -331,5 +366,3 @@ def handleClientCredentials(person: User)-> User:
     user.ip = person.ip
     user.port = person.port
     return user
-    
-    
