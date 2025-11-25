@@ -1,4 +1,5 @@
 # db.py
+from .models.models import User
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional
@@ -7,10 +8,10 @@ import threading
 import bcrypt  # make sure to: pip install bcrypt
 
 DB_PATH = "aubus.sqlite3"
-from .models.models import User
 DB_LOCK = threading.Lock()
 
 # ---------- Connection helpers ----------
+
 
 def get_connection() -> sqlite3.Connection:
     """
@@ -135,6 +136,7 @@ def init_db() -> None:
         conn.commit()
         conn.close()
 
+
 def add_driver_request(rider_id: int, driver_id: int) -> None:
     """
     Store that rider_id has sent a request to driver_id.
@@ -153,6 +155,7 @@ def add_driver_request(rider_id: int, driver_id: int) -> None:
 
         conn.commit()
         conn.close()
+
 
 def getRequests(driver_id: int) -> list[User]:
     """
@@ -239,6 +242,7 @@ def add_emergency_report(
         conn.close()
 
 # ---------- Password helpers ----------
+
 
 def hash_password(plain_password: str) -> str:
     """
@@ -345,7 +349,8 @@ def get_user_by_username(username: str) -> Optional[User]:
         if row is None:
             return None
         return _row_to_user(row)
-    
+
+
 def update_is_driver_by_username(username: str, new_value: bool) -> None:
     with DB_LOCK:
         conn = get_connection()
@@ -358,6 +363,7 @@ def update_is_driver_by_username(username: str, new_value: bool) -> None:
             conn.commit()
         finally:
             conn.close()
+
 
 def update_user_location(
     user_id: int,
@@ -401,6 +407,7 @@ def update_user_location(
         cur.execute(sql, values)
         conn.commit()
         conn.close()
+
 
 def get_user_by_id(user_id: int) -> Optional[User]:
     with DB_LOCK:
@@ -634,13 +641,10 @@ def normalize_time(time_str: str) -> str:
     return dt.strftime("%H:%M")
 
 
-def _time_to_minutes(time_str: str) -> int | None:
-    """Convert HH:MM to absolute minutes from midnight."""
-    try:
-        hours, minutes = map(int, time_str.split(":"))
-        return hours * 60 + minutes
-    except Exception:
-        return None
+def _time_to_minutes(t: str) -> int:
+    # expects "HH:MM"
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
 
 
 def find_candidate_drivers(
@@ -648,26 +652,32 @@ def find_candidate_drivers(
     area_filter: str | None = None,
     min_rating: float | None = None,
     depart_time: str | None = None,
+    direction: str | None = None,
+    weekday: int | None = None,
 ) -> list[User]:
     """
     Return a list of User objects representing all drivers
-    filtered by area.
+    filtered by:
+      - area (area_filter or user's area)
+      - minimum rating (if provided)
+      - schedules on a given weekday (if depart_time provided)
+      - direction ("toAUB"/"fromAUB" if provided)
+      - depart_time within ±30 minutes (if provided)
+
     area_filter:
         None/"" -> use user's area
-        "all"   -> all drivers
+        "all"   -> all areas
         other   -> specific area
-    min_rating:
-        None -> no filter
-        N    -> only drivers with rating_avg >= N
-    depart_time:
-        None -> ignore schedule filtering
-        "HH:MM" -> prefer drivers with schedule near that time
     """
+
     with DB_LOCK:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
+        # --------------------------
+        # Base: filter drivers by area + rating
+        # --------------------------
         area_value = (area_filter or "").strip()
         target_area = None if area_value.lower() == "all" else (area_value or user.area)
 
@@ -686,11 +696,10 @@ def find_candidate_drivers(
         query += " ORDER BY rating_avg DESC, rating_count DESC"
 
         cur.execute(query, params)
-
         rows = cur.fetchall()
 
         # Convert rows → User objects
-        result = []
+        result: list[User] = []
         for row in rows:
             result.append(
                 User(
@@ -707,47 +716,67 @@ def find_candidate_drivers(
                 )
             )
 
-        # Optional time-based filtering using driver schedules
+        # --------------------------
+        # Optional time+direction-based filtering using schedules
+        # --------------------------
         if depart_time:
             try:
-                normalized = normalize_time(depart_time)
+                normalized = normalize_time(depart_time)  # ensures "HH:MM"
             except Exception:
                 normalized = None
-            target_minutes = _time_to_minutes(normalized) if normalized else None
-            if target_minutes is not None and result:
-                weekday = datetime.utcnow().weekday()
-                driver_ids = [u.id for u in result]
-                placeholders = ",".join("?" for _ in driver_ids)
-                cur.execute(
-                    f"""
-                    SELECT user_id, depart_time
-                    FROM schedules
-                    WHERE user_id IN ({placeholders})
-                    AND weekday = ?
-                    """,
-                    driver_ids + [weekday],
-                )
-                schedule_map: dict[int, list[int]] = {}
-                for sched in cur.fetchall():
-                    minutes = _time_to_minutes(sched["depart_time"])
-                    if minutes is None:
-                        continue
-                    schedule_map.setdefault(sched["user_id"], []).append(minutes)
 
-                filtered: list[User] = []
-                window_minutes = 60  # consider drivers within ±1 hour of requested time
-                for driver in result:
-                    times = schedule_map.get(driver.id)
-                    if not times:
-                        # keep unscheduled drivers so results are not empty
-                        filtered.append(driver)
-                        continue
-                    if any(abs(t - target_minutes) <= window_minutes for t in times):
-                        filtered.append(driver)
-                result = filtered
+            target_minutes = _time_to_minutes(
+                normalized) if normalized else None
+            if target_minutes is not None and result:
+                # use rider-chosen weekday if provided, otherwise "today"
+                weekday_to_use = (
+                    weekday if weekday is not None else datetime.utcnow().weekday()
+                )
+
+                driver_ids = [u.id for u in result]
+                if driver_ids:
+                    placeholders = ",".join("?" for _ in driver_ids)
+                    cur.execute(
+                        f"""
+                        SELECT user_id, depart_time, direction
+                        FROM schedules
+                        WHERE user_id IN ({placeholders})
+                          AND weekday = ?
+                        """,
+                        driver_ids + [weekday_to_use],
+                    )
+
+                    # map: driver_id -> list[(minutes, direction)]
+                    schedule_map: dict[int, list[tuple[int, str]]] = {}
+                    for sched in cur.fetchall():
+                        minutes = _time_to_minutes(sched["depart_time"])
+                        if minutes is None:
+                            continue
+                        sched_dir = sched["direction"]
+                        schedule_map.setdefault(sched["user_id"], []).append(
+                            (minutes, sched_dir)
+                        )
+
+                    filtered: list[User] = []
+                    window_minutes = 30  # ±30 minutes
+                    for driver in result:
+                        entries = schedule_map.get(driver.id, [])
+                        if not entries:
+                            # driver has no schedule on that weekday → skip
+                            continue
+
+                        for minutes, sched_dir in entries:
+                            # 1) Direction must match if specified
+                            if direction is not None and sched_dir != direction:
+                                continue
+                            # 2) Time within ±30 minutes
+                            if abs(minutes - target_minutes) <= window_minutes:
+                                filtered.append(driver)
+                                break
+
+                    result = filtered
 
         conn.close()
-
         return result
 
 
@@ -858,7 +887,6 @@ def add_rating(
         conn.commit()
         conn.close()
 
-
         return new_avg, new_count
 
 
@@ -924,7 +952,7 @@ def list_requests_by_rider(rider_id: int):
 
 
 def list_requests_for_driver(driver_id: int):
-    
+
     with DB_LOCK:
         conn = get_connection()
         cur = conn.cursor()
