@@ -23,7 +23,7 @@ try:
         QAudioEncoderSettings,
         QMultimedia,
         QMediaPlayer,
-    QMediaContent,
+        QMediaContent,
     )
 except ImportError:
     QAudioRecorder = None
@@ -31,11 +31,14 @@ except ImportError:
     QMultimedia = None
     QMediaPlayer = None
     QMediaContent = None
-from backend.connections.client.client import * #connectToServer, sendCredentials, requestOther, receiveOther, changeMsg, 
+# connectToServer, sendCredentials, requestOther, receiveOther, changeMsg,
+from backend.connections.client.client import *
 from backend.DB.db import get_user_by_username, list_schedules_for_user
 
 # ---------------------------- CONTROLLER ---------------------------- #
-#for practical reasons and so that we don't let the pages block each other we will have a common controller to glue the GUI to the backend
+# for practical reasons and so that we don't let the pages block each other we will have a common controller to glue the GUI to the backend
+
+
 class AUBusController:
     def __init__(self, conn: socket.socket):
         self.conn = conn
@@ -90,10 +93,9 @@ class AUBusController:
         except Exception as e:
             print("Failed to send credentials:", e)
             return False
-    
+
     def changeMode(self):
         changeMsg(self.conn)
-        # if switching away from driver mode, stop listener
         self.stop_driver_listener()
 
     def driverListener(self):
@@ -108,11 +110,14 @@ class AUBusController:
 
     def getOther(
         self,
-        area_filter: str | None = None,
-        target: str = "drivers",
-        min_rating: float | None = None,
-        depart_time: str | None = None,
+        area_filter=None,
+        target="drivers",
+        min_rating=None,
+        depart_time=None,
+        direction=None,
+        weekday=None
     ):
+
         try:
             requestOther(
                 self.conn,
@@ -120,14 +125,18 @@ class AUBusController:
                 target=target,
                 min_rating=min_rating,
                 depart_time=depart_time,
+                direction=direction,
+                weekday=weekday,
             )
+
             drivers: list[dict] = receiveOther(self.conn)
+
             return drivers if isinstance(drivers, list) else []
         except Exception as e:
             print("Error while fetching drivers:", e)
             return []
-    
-    def get_weather(self, location: str)->str:
+
+    def get_weather(self, location: str) -> str:
         """
         Fetch weather with a short timeout so the UI never freezes.
         Falls back quietly if network is blocked/unavailable.
@@ -194,10 +203,10 @@ class AUBusController:
             return False
 
 
-
 # ---------------------------- AUTH PAGE ---------------------------- #
 class AuthPage(QWidget):
     """Unified Login & Register Page"""
+
     def __init__(self, parent, controller: AUBusController):
         super().__init__()
         self.parent = parent
@@ -220,7 +229,8 @@ class AuthPage(QWidget):
         self.password.setEchoMode(QLineEdit.Password)
         self.password.setPlaceholderText("Password")
         self.area = QComboBox()
-        self.area.addItems(["Select Area", "Hamra", "Achrafieh", "Verdun", "Jnah", "Other"])
+        self.area.addItems(
+            ["Select Area", "Hamra", "Achrafieh", "Verdun", "Jnah", "Other"])
 
         self.mode = "login"
         self.toggle_btn = QPushButton("Switch to Register")
@@ -255,13 +265,15 @@ class AuthPage(QWidget):
         self.email.setVisible(reg)
         self.area.setVisible(reg)
         self.submit_btn.setText("Register" if reg else "Login")
-        self.toggle_btn.setText("Switch to Login" if reg else "Switch to Register")
+        self.toggle_btn.setText(
+            "Switch to Login" if reg else "Switch to Register")
 
     def submit_action(self):
-        auth: bool 
+        auth: bool
         if self.mode == "register":
             if not self.username.text() or not self.password.text():
-                QMessageBox.warning(self, "Missing Info", "Please fill in required fields.")
+                QMessageBox.warning(self, "Missing Info",
+                                    "Please fill in required fields.")
                 return
             self.parent.user_data = {
                 "name": self.name.text(),
@@ -271,15 +283,15 @@ class AuthPage(QWidget):
                 "area": self.area.currentText(),
                 "rating": 0,
                 "role": "passenger"
-            }  
+            }
 
             data = self.parent.user_data
-            username   = data["username"]
-            password   = data["password"]
-            name       = data["name"]
-            email      = data["email"]
-            area       = data["area"]
-            is_driver  = False  # or however you store it
+            username = data["username"]
+            password = data["password"]
+            name = data["name"]
+            email = data["email"]
+            area = data["area"]
+            is_driver = False  # or however you store it
 
             auth = self.controller.login(
                 username,
@@ -293,7 +305,8 @@ class AuthPage(QWidget):
 
         else:
             if not self.username.text() or not self.password.text():
-                QMessageBox.warning(self, "Missing Info", "Please enter your credentials")
+                QMessageBox.warning(self, "Missing Info",
+                                    "Please enter your credentials")
                 return
             self.parent.user_data = {
                 "name": self.username.text(),
@@ -305,12 +318,12 @@ class AuthPage(QWidget):
                 "role": "passenger"
             }
             data = self.parent.user_data
-            username   = data["username"]
-            password   = data["password"]
-            name       = data["name"]
-            email      = data["email"]
-            area       = data["area"]
-            is_driver  = False  # or however you store it
+            username = data["username"]
+            password = data["password"]
+            name = data["name"]
+            email = data["email"]
+            area = data["area"]
+            is_driver = False  # or however you store it
 
             auth = self.controller.login(
                 username,
@@ -321,11 +334,13 @@ class AuthPage(QWidget):
                 is_driver,
                 login=1
             )
-        self.parent.weather_label.setText(self.controller.get_weather(self.parent.user_data.get('area','') if self.parent.user_data.get("area") in self.parent.user_data else "Beirut"))
-        
-        #sending username and password to the backend
-        if(not auth):
-            QMessageBox.warning(self, "Authentication Failed", "Invalid credentials or registration error.")
+        self.parent.weather_label.setText(self.controller.get_weather(self.parent.user_data.get(
+            'area', '') if self.parent.user_data.get("area") in self.parent.user_data else "Beirut"))
+
+        # sending username and password to the backend
+        if (not auth):
+            QMessageBox.warning(self, "Authentication Failed",
+                                "Invalid credentials or registration error.")
             self.parent.goto_page("auth")
 
         self.parent.user_data["authenticated"] = auth
@@ -370,57 +385,67 @@ class ProfilePage(QWidget):
         if not data:
             return
         if data.get("username"):
-            self.controller.refresh_user_from_db(data["username"], self.parent.user_data)
+            self.controller.refresh_user_from_db(
+                data["username"], self.parent.user_data)
             data = self.parent.user_data
         info = f"""
-        <b>Name:</b> {data.get('name','')}<br>
-        <b>Username:</b> {data.get('username','')}<br>
-        <b>Email:</b> {data.get('email','')}<br>
-        <b>Area:</b> {data.get('area','')}
+        <b>Name:</b> {data.get('name', '')}<br>
+        <b>Username:</b> {data.get('username', '')}<br>
+        <b>Email:</b> {data.get('email', '')}<br>
+        <b>Area:</b> {data.get('area', '')}
         """
         stars = "⭐" * int(data.get("rating", 0))
         self.info_label.setText(info)
-        self.rating_label.setText(f"<b>Your Rating:</b> {stars if stars else 'Not rated yet'} (avg: {data.get('rating_avg',0):.1f} from {data.get('rating_count',0)} ratings)")
+        self.rating_label.setText(
+            f"<b>Your Rating:</b> {stars if stars else 'Not rated yet'} (avg: {data.get('rating_avg', 0):.1f} from {data.get('rating_count', 0)} ratings)")
 
     def set_role(self):
         if self.driver_radio.isChecked():
-            if(self.parent.user_data["role"] != "driver"): 
+            if (self.parent.user_data["role"] != "driver"):
                 self.controller.changeMode()
                 self.controller.driverListener()
 
             self.parent.user_data["role"] = "driver"
             self.parent.goto_page("schedule")
         elif self.passenger_radio.isChecked():
-            if(self.parent.user_data["role"] != "passenger"):
+            if (self.parent.user_data["role"] != "passenger"):
                 self.controller.changeMode()
                 self.controller.stop_driver_listener()
             self.parent.user_data["role"] = "passenger"
             self.parent.goto_page("dashboard")
         else:
-            QMessageBox.warning(self, "Selection Required", "Please select Driver or Passenger.")
+            QMessageBox.warning(self, "Selection Required",
+                                "Please select Driver or Passenger.")
 # ---------------------------- SCHEDULE PAGE ---------------------------- #
+
+
 class SchedulePage(QWidget):
     def __init__(self, parent, controller: AUBusController):
         super().__init__()
         self.parent = parent
         self.controller = controller
-        self.day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        self.day_names = ["Monday", "Tuesday", "Wednesday",
+                          "Thursday", "Friday", "Saturday", "Sunday"]
+
         layout = QVBoxLayout()
         title = QLabel("<h1 style='color:#781414;'>Your Schedule</h1>")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
+        # Day selector
         self.day_select = QComboBox()
         self.day_select.addItems(self.day_names)
 
-        self.home_depart = QSpinBox()
-        self.home_depart.setRange(0, 23)
-        self.home_depart.setPrefix("From Home (hr): ")
+        # --- Time inputs: HH:MM format ---
+        self.home_depart = QTimeEdit()
+        self.home_depart.setDisplayFormat("HH:mm")
+        self.home_depart.setTime(QTime(8, 0))      # default 08:00
 
-        self.aub_depart = QSpinBox()
-        self.aub_depart.setRange(0, 23)
-        self.aub_depart.setPrefix("From AUB (hr): ")
+        self.aub_depart = QTimeEdit()
+        self.aub_depart.setDisplayFormat("HH:mm")
+        self.aub_depart.setTime(QTime(17, 0))      # default 17:00
 
+        # Table showing saved schedule
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Day", "Dep. Home", "Dep. AUB"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -431,7 +456,9 @@ class SchedulePage(QWidget):
 
         layout.addWidget(QLabel("Select Day:"))
         layout.addWidget(self.day_select)
+        layout.addWidget(QLabel("From Home (HH:MM):"))
         layout.addWidget(self.home_depart)
+        layout.addWidget(QLabel("From AUB (HH:MM):"))
         layout.addWidget(self.aub_depart)
         layout.addWidget(add_btn)
         layout.addWidget(self.table)
@@ -444,7 +471,8 @@ class SchedulePage(QWidget):
             return user_id
         username = self.parent.user_data.get("username")
         if username:
-            self.controller.refresh_user_from_db(username, self.parent.user_data)
+            self.controller.refresh_user_from_db(
+                username, self.parent.user_data)
             return self.parent.user_data.get("id")
         return None
 
@@ -470,7 +498,8 @@ class SchedulePage(QWidget):
             if not 0 <= weekday < len(self.day_names):
                 continue
             grouped.setdefault(weekday, {"toAUB": [], "fromAUB": []})
-            grouped[weekday][direction].append(str(entry.get("depart_time", "")))
+            grouped[weekday][direction].append(
+                str(entry.get("depart_time", "")))
 
         for weekday in range(len(self.day_names)):
             day_data = grouped.get(weekday)
@@ -478,23 +507,33 @@ class SchedulePage(QWidget):
                 continue
             row = self.table.rowCount()
             self.table.insertRow(row)
-            self.table.setItem(row, 0, QTableWidgetItem(self.day_names[weekday]))
-            home_times = ", ".join(day_data["toAUB"]) if day_data["toAUB"] else "-"
-            aub_times = ", ".join(day_data["fromAUB"]) if day_data["fromAUB"] else "-"
+            self.table.setItem(
+                row, 0, QTableWidgetItem(self.day_names[weekday]))
+            home_times = ", ".join(
+                day_data["toAUB"]) if day_data["toAUB"] else "-"
+            aub_times = ", ".join(
+                day_data["fromAUB"]) if day_data["fromAUB"] else "-"
             self.table.setItem(row, 1, QTableWidgetItem(home_times))
             self.table.setItem(row, 2, QTableWidgetItem(aub_times))
 
     def add_schedule(self):
-        dep_home = self.home_depart.value()
-        dep_aub = self.aub_depart.value()
-        dep_home_str = f"{dep_home:02d}:00"
-        dep_aub_str = f"{dep_aub:02d}:00"
+        # Read times in HH:MM format from the time editors
+        dep_home_str = self.home_depart.time().toString("HH:mm")
+        dep_aub_str = self.aub_depart.time().toString("HH:mm")
 
-        success_home = self.controller.sendSchedule(self.day_select.currentIndex(), dep_home_str, "toAUB")
-        success_aub = self.controller.sendSchedule(self.day_select.currentIndex(), dep_aub_str, "fromAUB")
+        success_home = self.controller.sendSchedule(
+            self.day_select.currentIndex(), dep_home_str, "toAUB"
+        )
+        success_aub = self.controller.sendSchedule(
+            self.day_select.currentIndex(), dep_aub_str, "fromAUB"
+        )
 
         if not (success_home and success_aub):
-            QMessageBox.warning(self, "Save Failed", "Could not save one or more schedule entries.")
+            QMessageBox.warning(
+                self,
+                "Save Failed",
+                "Could not save one or more schedule entries.",
+            )
         self.load_schedule()
 
 
@@ -503,13 +542,16 @@ class LebanonMapWidget(QWidget):
     """
     Static Lebanon map with a highlighted user location and driver locations.
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.user_location = None  # (lat, lon, label)
         self.driver_locations: list[tuple[float, float, str]] = []
         self.setMinimumHeight(260)
-        self.pixmap_path = os.path.join(os.path.dirname(__file__), "assets", "lebanon_map.png")
-        self.pixmap = QPixmap(self.pixmap_path) if os.path.exists(self.pixmap_path) else QPixmap()
+        self.pixmap_path = os.path.join(os.path.dirname(
+            __file__), "assets", "lebanon_map.png")
+        self.pixmap = QPixmap(self.pixmap_path) if os.path.exists(
+            self.pixmap_path) else QPixmap()
 
     def set_user_location(self, latitude: float | None, longitude: float | None, label: str = ""):
         if latitude is None or longitude is None:
@@ -552,17 +594,20 @@ class LebanonMapWidget(QWidget):
         width = self.width()
         height = self.height()
         margin = 20
-        map_rect = QRectF(margin, margin, width - 2 * margin, height - 2 * margin)
+        map_rect = QRectF(margin, margin, width - 2 *
+                          margin, height - 2 * margin)
 
         # background image or fallback
         if not self.pixmap.isNull():
-            scaled = self.pixmap.scaled(map_rect.size().toSize(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            scaled = self.pixmap.scaled(map_rect.size().toSize(
+            ), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             # center the scaled pixmap inside map_rect
             x_offset = map_rect.left() + (map_rect.width() - scaled.width()) / 2
             y_offset = map_rect.top() + (map_rect.height() - scaled.height()) / 2
             painter.drawPixmap(int(x_offset), int(y_offset), scaled)
             # update map_rect to the actual drawn pixmap area for coordinate mapping
-            map_rect = QRectF(x_offset, y_offset, scaled.width(), scaled.height())
+            map_rect = QRectF(x_offset, y_offset,
+                              scaled.width(), scaled.height())
         else:
             painter.fillRect(self.rect(), QColor("#f7f8fa"))
             painter.setPen(Qt.NoPen)
@@ -571,9 +616,11 @@ class LebanonMapWidget(QWidget):
             painter.setPen(QPen(QColor(200, 200, 200, 110), 1))
             for i in range(6):
                 offset = (i + 1) * 8
-                painter.drawArc(map_rect.adjusted(offset, offset, -offset, -offset), 30 * 16, 220 * 16)
+                painter.drawArc(map_rect.adjusted(
+                    offset, offset, -offset, -offset), 30 * 16, 220 * 16)
             painter.setPen(QPen(QColor("#7f1d1d")))
-            painter.drawText(map_rect, Qt.AlignCenter, "Place lebanon_map.png in GUI/assets")
+            painter.drawText(map_rect, Qt.AlignCenter,
+                             "Place lebanon_map.png in GUI/assets")
 
         # driver dots (draw first, so user appears on top)
         painter.setPen(QPen(QColor("#d35400"), 1.2))
@@ -611,19 +658,37 @@ class DashboardPage(QWidget):
         subtitle.setStyleSheet("color:#555; font-size:14px;")
 
         self.area_box = QComboBox()
-        self.area_box.addItems(["Select Area", "Hamra", "Achrafieh", "Verdun", "Jnah", "Other"])
+        self.area_box.addItems(
+            ["Select Area", "Hamra", "Achrafieh", "Verdun", "Jnah", "Other"])
+
+        # Weekday selector
+        self.weekday_box = QComboBox()
+        self.weekday_box.addItems([
+            "Monday", "Tuesday", "Wednesday",
+            "Thursday", "Friday", "Saturday", "Sunday"
+        ])
+
+        # Direction selector: To / From AUB
+        self.to_aub_radio = QRadioButton("To AUB")
+        self.from_aub_radio = QRadioButton("From AUB")
+        self.to_aub_radio.setChecked(True)
+        direction_layout = QHBoxLayout()
+        direction_layout.addWidget(self.to_aub_radio)
+        direction_layout.addWidget(self.from_aub_radio)
 
         self.depart_time_edit = QTimeEdit()
         self.depart_time_edit.setDisplayFormat("HH:mm")
         self.depart_time_edit.setTime(QTime.currentTime())
-        self.depart_time_edit.setToolTip("Preferred departure time from your location")
+        self.depart_time_edit.setToolTip(
+            "Preferred departure time from your location")
 
         self.rating_filter = QSpinBox()
         self.rating_filter.setRange(0, 5)
         self.rating_filter.setPrefix("Min Rating: ")
         self.rating_filter.setSuffix(" ★")
         self.rating_filter.setValue(0)
-        self.rating_filter.setToolTip("Only show drivers with this rating or above (0 to disable)")
+        self.rating_filter.setToolTip(
+            "Only show drivers with this rating or above (0 to disable)")
 
         req_btn = QPushButton("Send Ride Request")
         req_btn.clicked.connect(self.show_drivers)
@@ -649,6 +714,8 @@ class DashboardPage(QWidget):
         layout.addWidget(subtitle)
         layout.addSpacing(15)
         layout.addWidget(self.area_box)
+        layout.addWidget(self.weekday_box)
+        layout.addLayout(direction_layout)
         layout.addWidget(self.depart_time_edit)
         layout.addWidget(self.rating_filter)
         layout.addWidget(req_btn)
@@ -674,12 +741,17 @@ class DashboardPage(QWidget):
             min_rating = self.rating_filter.value()
             min_rating = min_rating if min_rating > 0 else None
             depart_time = self.depart_time_edit.time().toString("HH:mm")
+            direction = "toAUB" if self.to_aub_radio.isChecked() else "fromAUB"
+            weekday = self.weekday_box.currentIndex()   # Monday = 0 … Sunday = 6
 
-            drivers : list[dict] = self.controller.getOther(
+            drivers: list[dict] = self.controller.getOther(
                 area_filter,
                 min_rating=min_rating,
                 depart_time=depart_time,
+                direction=direction,
+                weekday=weekday,
             ) or []
+
             if not isinstance(drivers, list):
                 drivers = []
             markers: list[tuple[float, float, str]] = []
@@ -696,7 +768,8 @@ class DashboardPage(QWidget):
                 email = str(driver.get("email", "N/A"))
                 area = str(driver.get("area", driver.get("location", "N/A")))
                 ip = str(driver.get("ip", ""))
-                rating = self._format_rating(driver.get("rating_avg", driver.get("rating", "N/A")))
+                rating = self._format_rating(driver.get(
+                    "rating_avg", driver.get("rating", "N/A")))
                 for j, val in enumerate([name, username, email, area, ip, rating]):
                     self.table.setItem(row_idx, j, QTableWidgetItem(val))
                 lat = driver.get("latitude")
@@ -713,7 +786,8 @@ class DashboardPage(QWidget):
             self.map_widget.set_driver_locations(markers)
         except Exception as e:
             print("Error showing drivers:", e)
-            QMessageBox.warning(self, "Error", "Could not load drivers. Please try again.")
+            QMessageBox.warning(
+                self, "Error", "Could not load drivers. Please try again.")
 
     def refresh_location(self):
         """Fetch public IP, geolocate, update DB, and refresh map."""
@@ -721,19 +795,24 @@ class DashboardPage(QWidget):
         QApplication.processEvents()
         try:
             api_key = "221f518db3f84c76a57801bdf9ef8c6e"
-            res = requests.get(f"https://api.ipgeolocation.io/ipgeo?apiKey={api_key}", timeout=8)
+            res = requests.get(
+                f"https://api.ipgeolocation.io/ipgeo?apiKey={api_key}", timeout=8)
             data = res.json()
             if not data or "latitude" not in data or "longitude" not in data:
                 raise RuntimeError("Geo lookup failed")
             lat = float(data.get("latitude"))
             lon = float(data.get("longitude"))
             city = data.get("city") or data.get("state_prov") or ""
-            country = data.get("country_name") or data.get("country_code2") or ""
-            area = city or data.get("state_prov") or self.parent.user_data.get("area")
-            print(f"Location fetched: {lat}, {lon} - {city}, {country}, {area}")
+            country = data.get("country_name") or data.get(
+                "country_code2") or ""
+            area = city or data.get(
+                "state_prov") or self.parent.user_data.get("area")
+            print(
+                f"Location fetched: {lat}, {lon} - {city}, {country}, {area}")
 
             # Persist to server and local cache
-            success = self.controller.update_location(lat, lon, city, country, area)
+            success = self.controller.update_location(
+                lat, lon, city, country, area)
             self.parent.user_data["latitude"] = lat
             self.parent.user_data["longitude"] = lon
             self.parent.user_data["city"] = city
@@ -742,17 +821,20 @@ class DashboardPage(QWidget):
                 self.parent.user_data["area"] = area
 
             pretty_coords = f"({float(lat):.2f}, {float(lon):.2f})" if lat is not None and lon is not None else ""
-            self.location_label.setText(f"Location: {city}, {country} {pretty_coords}".strip())
+            self.location_label.setText(
+                f"Location: {city}, {country} {pretty_coords}".strip())
             self.map_widget.set_user_location(lat, lon, city)
             # refresh driver markers on the map with the latest view
             self.map_widget.set_driver_locations(self.driver_markers)
 
             if not success:
-                QMessageBox.warning(self, "Warning", "Could not sync location to server.")
+                QMessageBox.warning(
+                    self, "Warning", "Could not sync location to server.")
         except Exception as e:
             print("Error refreshing location:", e)
             self.location_label.setText("Location: unavailable")
-            QMessageBox.warning(self, "Error", "Could not determine your location. Please try again.")
+            QMessageBox.warning(
+                self, "Error", "Could not determine your location. Please try again.")
 
     def _coords_for_area(self, area: str | None):
         """Rudimentary area → lat/lon mapping for markers."""
@@ -784,11 +866,11 @@ class DashboardPage(QWidget):
         except Exception:
             return str(value if value is not None else "N/A")
 
-
     def open_chat(self, row, _):
         selected_driver = self.table.item(row, 0)
         if selected_driver.text() == self.parent.user_data.get("username"):
-            QMessageBox.warning(self, "Invalid Action", "You cannot chat with yourself.")
+            QMessageBox.warning(self, "Invalid Action",
+                                "You cannot chat with yourself.")
             return
 
         self.parent.chat_partner = {
@@ -802,14 +884,16 @@ class DashboardPage(QWidget):
         self.parent.chat_started = True
 
         # Notify user that we're waiting for driver acceptance
-        QMessageBox.information(self, "Waiting", "Waiting for driver to accept chat...")
+        QMessageBox.information(
+            self, "Waiting", "Waiting for driver to accept chat...")
 
         # Wait for server response (driver OK)
         # ensure stale P2P is closed before establishing new one
         self.controller.close_p2p()
         P2Pcon = waitForChatApproval(self.controller.conn)
         if not P2Pcon:
-            QMessageBox.warning(self, "Chat Failed", "No response from driver or server.")
+            QMessageBox.warning(self, "Chat Failed",
+                                "No response from driver or server.")
             return
         self.controller.set_p2p_socket(P2Pcon)
         self.parent.goto_page("chat")
@@ -820,10 +904,12 @@ class ChatPage(QWidget):
     """Chat page adapts based on role (Driver gets split view, Passenger sees only chat)"""
     incoming_payload = pyqtSignal(dict)
 
-    def __init__(self, parent, controller:AUBusController):
+    def __init__(self, parent, controller: AUBusController):
         super().__init__()
         self.parent = parent
         self.controller = controller
+        if self.parent.user_data.get("is_driver", False):
+            self.controller.driverListener()
         self.receiver_started = False
         self.recv_buffer = b""
         self.audio_recorder = QAudioRecorder() if QAudioRecorder else None
@@ -836,7 +922,8 @@ class ChatPage(QWidget):
         # Left panel: Chat
         self.header = QLabel("No active chat")
         self.header.setAlignment(Qt.AlignCenter)
-        self.header.setStyleSheet("background-color:#781414; color:white; padding:12px; border-radius:8px;")
+        self.header.setStyleSheet(
+            "background-color:#781414; color:white; padding:12px; border-radius:8px;")
 
         self.chat_box = QTextEdit()
         self.chat_box.setReadOnly(True)
@@ -851,7 +938,8 @@ class ChatPage(QWidget):
         voice_scroll.setWidget(voice_widget)
         voice_label = QLabel("Voice notes")
         voice_label.setAlignment(Qt.AlignLeft)
-        voice_label.setStyleSheet("font-weight:bold; color:#444; margin-top:6px;")
+        voice_label.setStyleSheet(
+            "font-weight:bold; color:#444; margin-top:6px;")
 
         self.msg_input = QLineEdit()
         self.msg_input.setPlaceholderText("Type message...")
@@ -869,7 +957,8 @@ class ChatPage(QWidget):
         if not self.audio_recorder:
             self.record_btn.setEnabled(False)
             self.send_voice_btn.setEnabled(False)
-            self.record_status.setText("Audio recording not available on this device.")
+            self.record_status.setText(
+                "Audio recording not available on this device.")
 
         msg_layout = QHBoxLayout()
         msg_layout.addWidget(self.msg_input)
@@ -898,7 +987,8 @@ class ChatPage(QWidget):
 
         # Right panel (only for drivers): Passenger list
         self.passenger_table = QTableWidget(0, 6)
-        self.passenger_table.setHorizontalHeaderLabels(["Passenger", "Username", "Email", "Area", "IP", "Rating"])
+        self.passenger_table.setHorizontalHeaderLabels(
+            ["Passenger", "Username", "Email", "Area", "IP", "Rating"])
         self.passenger_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.passenger_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.passenger_table.cellDoubleClicked.connect(self.select_passenger)
@@ -917,7 +1007,8 @@ class ChatPage(QWidget):
     def populate_passenger_table(self):
         """Temporary mock data — replace later with controller call"""
         self.passengers = []
-        self.passengers = self.controller.getOther(target="passengers") or []
+        self.passengers = self.controller.getOther(
+            area_filter=None, target="passengers") or []
         if not isinstance(self.passengers, list):
             self.passengers = []
 
@@ -931,7 +1022,8 @@ class ChatPage(QWidget):
             email = str(driver.get("email", "N/A"))
             area = str(driver.get("area", driver.get("location", "N/A")))
             ip = str(driver.get("ip", ""))
-            rating = self._fmt_rating(driver.get("rating_avg", driver.get("rating", "N/A")))
+            rating = self._fmt_rating(driver.get(
+                "rating_avg", driver.get("rating", "N/A")))
 
             for j, val in enumerate([name, username, email, area, ip, rating]):
                 self.passenger_table.setItem(i, j, QTableWidgetItem(val))
@@ -966,8 +1058,6 @@ class ChatPage(QWidget):
         right_widget.setLayout(right_layout)
         return right_widget
 
-    
-
     def select_passenger(self, row, _):
         """Driver double-clicks passenger to open chat"""
         # Ensure list is valid
@@ -979,8 +1069,15 @@ class ChatPage(QWidget):
 
         # Prevent chatting with yourself
         if passenger.get("name") == self.parent.user_data.get("username"):
-            QMessageBox.warning(self, "Invalid", "You cannot chat with yourself.")
+            QMessageBox.warning(
+                self, "Invalid", "You cannot chat with yourself.")
             return
+
+        # 🔥 START DRIVER LISTENER BEFORE ANY CHAT-OK MESSAGE IS SENT
+        # (THIS IS THE REQUIRED FIX)
+        if self.parent.user_data.get("is_driver", False):
+            self.controller.driverListener()
+
         # Close any previous P2P before starting a new chat
         self.controller.close_p2p()
 
@@ -990,17 +1087,22 @@ class ChatPage(QWidget):
 
         # Update chat header and clear previous chat
         self.chat_box.clear()
-        rating_val = self._fmt_rating(passenger.get("rating") or passenger.get("rating_avg") or "N/A")
+        rating_val = self._fmt_rating(passenger.get(
+            "rating") or passenger.get("rating_avg") or "N/A")
         self.header.setText(
             f"Chatting with: <b>{passenger.get('name')}</b> | "
-            f"Area: {passenger.get('location', passenger.get('area','N/A'))} | "
+            f"Area: {passenger.get('location', passenger.get('area', 'N/A'))} | "
             f"Rating: {rating_val}"
         )
 
+        # Send acceptance to the server
         sendChatOK(self.controller.conn, passenger["username"])
 
         # Provide initial system message
-        self.chat_box.append(f"🟢 Connected to {passenger.get('name')}.\nYou can start messaging now.")
+        self.chat_box.append(
+            f"🟢 Connected to {passenger.get('name')}.\nYou can start messaging now."
+        )
+
         # Ensure background receiver starts once P2P socket is available
         if self.controller.p2pcon:
             self.start_receiver()
@@ -1012,7 +1114,8 @@ class ChatPage(QWidget):
             self.header.setText("No active chat")
         else:
             area = partner.get("area", partner.get("location", "N/A"))
-            rating = self._fmt_rating(partner.get("rating") or partner.get("rating_avg") or "N/A")
+            rating = self._fmt_rating(partner.get(
+                "rating") or partner.get("rating_avg") or "N/A")
             name = partner.get("name", "Unknown")
             self.header.setText(
                 f"Chatting with: <b>{name}</b> | Area: {area} | Rating: {rating}"
@@ -1038,7 +1141,8 @@ class ChatPage(QWidget):
         self.msg_input.clear()
         payload = {"type": "text", "message": msg}
         if not self.send_payload(payload):
-            QMessageBox.warning(self, "No Connection", "P2P connection not established yet.")
+            QMessageBox.warning(self, "No Connection",
+                                "P2P connection not established yet.")
 
     def send_payload(self, payload: dict) -> bool:
         # Send through P2P socket as newline-delimited JSON
@@ -1054,12 +1158,14 @@ class ChatPage(QWidget):
 
     def toggle_recording(self):
         if not self.audio_recorder:
-            QMessageBox.warning(self, "Unavailable", "Audio recording is not available.")
+            QMessageBox.warning(self, "Unavailable",
+                                "Audio recording is not available.")
             return
         if not self.is_recording:
             # start recording
             try:
-                fd, path = tempfile.mkstemp(prefix="aubus_voice_", suffix=".wav")
+                fd, path = tempfile.mkstemp(
+                    prefix="aubus_voice_", suffix=".wav")
                 os.close(fd)
                 self.current_record_path = path
                 settings = QAudioEncoderSettings()
@@ -1077,7 +1183,8 @@ class ChatPage(QWidget):
                 self.record_status.setText("Recording... speak now")
                 self.send_voice_btn.setEnabled(False)
             except Exception as e:
-                QMessageBox.warning(self, "Record Failed", f"Could not start recording: {e}")
+                QMessageBox.warning(self, "Record Failed",
+                                    f"Could not start recording: {e}")
         else:
             try:
                 self.audio_recorder.stop()
@@ -1085,17 +1192,20 @@ class ChatPage(QWidget):
                 self.record_btn.setText("Record Voice")
                 self.last_recorded_path = self.current_record_path
                 if self.last_recorded_path and os.path.exists(self.last_recorded_path):
-                    self.record_status.setText(f"Recorded: {os.path.basename(self.last_recorded_path)}")
+                    self.record_status.setText(
+                        f"Recorded: {os.path.basename(self.last_recorded_path)}")
                     self.send_voice_btn.setEnabled(True)
                 else:
                     self.record_status.setText("No recording captured")
                     self.send_voice_btn.setEnabled(False)
             except Exception as e:
-                QMessageBox.warning(self, "Record Failed", f"Could not stop recording: {e}")
+                QMessageBox.warning(self, "Record Failed",
+                                    f"Could not stop recording: {e}")
 
     def send_voice_note(self):
         if not self.last_recorded_path or not os.path.exists(self.last_recorded_path):
-            QMessageBox.warning(self, "No Recording", "Record a voice note first.")
+            QMessageBox.warning(self, "No Recording",
+                                "Record a voice note first.")
             return
         try:
             with open(self.last_recorded_path, "rb") as f:
@@ -1110,9 +1220,12 @@ class ChatPage(QWidget):
                 self.add_voice_note_ui("You", self.last_recorded_path)
                 self.send_voice_btn.setEnabled(False)
             else:
-                QMessageBox.warning(self, "No Connection", "P2P connection not established yet.")
+                QMessageBox.warning(self, "No Connection",
+                                    "P2P connection not established yet.")
         except Exception as e:
-            QMessageBox.warning(self, "Send Failed", f"Could not send voice note: {e}")
+            QMessageBox.warning(self, "Send Failed",
+                                f"Could not send voice note: {e}")
+
     def start_receiver(self):
         """
         Starts a background thread that continuously listens for incoming chat messages.
@@ -1135,7 +1248,8 @@ class ChatPage(QWidget):
                         break
                     self.recv_buffer += data
                     while b"\n" in self.recv_buffer:
-                        raw, self.recv_buffer = self.recv_buffer.split(b"\n", 1)
+                        raw, self.recv_buffer = self.recv_buffer.split(
+                            b"\n", 1)
                         if not raw:
                             continue
                         try:
@@ -1144,7 +1258,8 @@ class ChatPage(QWidget):
                         except Exception:
                             try:
                                 msg = raw.decode("utf-8", errors="ignore")
-                                self.incoming_payload.emit({"type": "plain", "message": msg})
+                                self.incoming_payload.emit(
+                                    {"type": "plain", "message": msg})
                             except Exception:
                                 pass
                             continue
@@ -1160,28 +1275,31 @@ class ChatPage(QWidget):
 
     def open_rating(self):
         if not self.parent.chat_started or not self.parent.chat_partner:
-            QMessageBox.warning(self, "No Chat", "You must chat with someone before rating.")
+            QMessageBox.warning(
+                self, "No Chat", "You must chat with someone before rating.")
             return
         self.parent.goto_page("rating")
 
     def handle_incoming_payload(self, payload: dict):
         msg_type = payload.get("type")
         if msg_type == "text":
-            self.chat_box.append(f"Peer: {payload.get('message','')}")
+            self.chat_box.append(f"Peer: {payload.get('message', '')}")
         elif msg_type == "voice":
             b64 = payload.get("data")
             filename = payload.get("filename", "voice_note.wav")
             try:
                 audio_bytes = base64.b64decode(b64) if b64 else b""
-                save_path = os.path.join(tempfile.gettempdir(), f"peer_{int(time.time())}_{filename}")
+                save_path = os.path.join(
+                    tempfile.gettempdir(), f"peer_{int(time.time())}_{filename}")
                 with open(save_path, "wb") as f:
                     f.write(audio_bytes)
                 self.chat_box.append("Peer sent a voice note.")
                 self.add_voice_note_ui("Peer", save_path)
             except Exception as e:
-                self.chat_box.append(f"Failed to process incoming voice note: {e}")
+                self.chat_box.append(
+                    f"Failed to process incoming voice note: {e}")
         elif msg_type == "plain":
-            self.chat_box.append(f"Peer: {payload.get('message','')}")
+            self.chat_box.append(f"Peer: {payload.get('message', '')}")
         else:
             # fallback if peer sends plain message structure
             self.chat_box.append(f"Peer: {payload}")
@@ -1208,7 +1326,8 @@ class ChatPage(QWidget):
 
     def play_audio(self, filepath: str):
         if self.media_player:
-            self.media_player.setMedia(QMediaContent(QUrl.fromLocalFile(filepath)))
+            self.media_player.setMedia(
+                QMediaContent(QUrl.fromLocalFile(filepath)))
             self.media_player.play()
         else:
             QMessageBox.information(self, "Voice Note", f"Saved at {filepath}")
@@ -1217,6 +1336,7 @@ class ChatPage(QWidget):
 # ---------------------------- XO PAGE ---------------------------- #
 class XOPage(QWidget):
     """Simple tic-tac-toe game against a light bot."""
+
     def __init__(self, parent):
         super().__init__()
         self.parent = parent
@@ -1344,6 +1464,8 @@ class XOPage(QWidget):
         return any(all(self.board[i] == mark for i in line) for line in wins)
 
 # ---------------------------- RATING PAGE ---------------------------- #
+
+
 class RatingPage(QWidget):
     def __init__(self, parent):
         super().__init__()
@@ -1357,7 +1479,8 @@ class RatingPage(QWidget):
         star_layout = QHBoxLayout()
         for i in range(5):
             star = QPushButton("⭐")
-            star.setStyleSheet("font-size:30px; background:none; border:none; color:#bbb;")
+            star.setStyleSheet(
+                "font-size:30px; background:none; border:none; color:#bbb;")
             star.clicked.connect(lambda _, x=i: self.set_rating(x + 1))
             self.stars.append(star)
             star_layout.addWidget(star, alignment=Qt.AlignCenter)
@@ -1384,14 +1507,17 @@ class RatingPage(QWidget):
             QMessageBox.warning(self, "Invalid", "Start a chat before rating.")
             return
         for i, s in enumerate(self.stars):
-            s.setStyleSheet(f"font-size:30px; background:none; border:none; color:{'#FFD700' if i < value else '#bbb'};")
+            s.setStyleSheet(
+                f"font-size:30px; background:none; border:none; color:{'#FFD700' if i < value else '#bbb'};")
         self.parent.user_data["rating"] = value
         partner = self.parent.chat_partner or {}
         target_username = partner.get("username")
         success = False
         if target_username:
-            success = self.parent.controller.rate_partner(target_username, value, "")
-        QMessageBox.information(self, "Thank You", f"{'Saved' if success else 'Failed to save'} rating: {value} stars")
+            success = self.parent.controller.rate_partner(
+                target_username, value, "")
+        QMessageBox.information(
+            self, "Thank You", f"{'Saved' if success else 'Failed to save'} rating: {value} stars")
         self.parent.goto_page("dashboard")
 
 
@@ -1460,7 +1586,7 @@ class AUBusApp(QMainWindow):
         self.pages = {
             "auth": AuthPage(self, self.controller),
             "profile": ProfilePage(self, self.controller),
-            "schedule": SchedulePage(self,self.controller),
+            "schedule": SchedulePage(self, self.controller),
             "dashboard": DashboardPage(self, self.controller),
             "chat": ChatPage(self, self.controller),
             "rating": RatingPage(self),
@@ -1477,7 +1603,8 @@ class AUBusApp(QMainWindow):
 
         # Create weather label INSIDE sidebar (at the bottom)
         self.weather_label = QLabel("🌤️ 23°C in Beirut")
-        self.weather_label.setText(self.controller.get_weather(self.user_data.get('area','') if self.user_data.get("area") in self.user_data else "Beirut"))
+        self.weather_label.setText(self.controller.get_weather(self.user_data.get(
+            'area', '') if self.user_data.get("area") in self.user_data else "Beirut"))
         self.weather_label.setAlignment(Qt.AlignCenter)
         self.weather_label.setStyleSheet("""
             color: white;
@@ -1555,7 +1682,8 @@ class AUBusApp(QMainWindow):
 
         # Prevent accessing any page except Auth before login/register
         if not self.user_data.get("authenticated", False) and name != "auth":
-            QMessageBox.warning(self, "Access Denied", "Please log in or register first.")
+            QMessageBox.warning(self, "Access Denied",
+                                "Please log in or register first.")
             return
 
         # Once authenticated, all pages are allowed
@@ -1567,7 +1695,8 @@ class AUBusApp(QMainWindow):
             self.pages["rating"].refresh_role()
         elif name == "schedule":
             if self.user_data.get("role") != "driver":
-                QMessageBox.warning(self, "Access Denied", "Only drivers can access Schedule.")
+                QMessageBox.warning(self, "Access Denied",
+                                    "Only drivers can access Schedule.")
                 return
             self.pages["schedule"].load_schedule()
 
@@ -1585,13 +1714,17 @@ class AUBusApp(QMainWindow):
         }
         success = self.controller.send_emergency_report(payload)
         if success:
-            QMessageBox.information(self, "Emergency Sent", "Emergency alert sent to server.")
+            QMessageBox.information(
+                self, "Emergency Sent", "Emergency alert sent to server.")
         else:
-            QMessageBox.warning(self, "Failed", "Could not send emergency alert. Check connection.")
+            QMessageBox.warning(
+                self, "Failed", "Could not send emergency alert. Check connection.")
+
+
 # ---------------------------- RUN APP ---------------------------- #
 if __name__ == "__main__":
     ip: str = (input("enter IP: "))
-    connection : socket.socket = connectToServer(ip)
+    connection: socket.socket = connectToServer(ip)
     app = QApplication(sys.argv)
     window = AUBusApp(connection)
     window.show()
